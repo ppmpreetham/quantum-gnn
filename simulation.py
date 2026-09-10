@@ -85,6 +85,17 @@ def spearman(x: Sequence[float], y: Sequence[float]) -> float:
     return float(dx @ dy / denom) if denom > 0 else float("nan")
 
 
+def _timed_median_ms(fn, repeats: int = 25) -> float:
+    """Median wall-clock of fn() in ms; robust at sub-ms scale."""
+    fn()  # warmup
+    samples = []
+    for _ in range(repeats):
+        t0 = time.perf_counter()
+        fn()
+        samples.append(time.perf_counter() - t0)
+    return float(np.median(samples)) * 1e3
+
+
 @dataclass
 class RoverState:
     position: np.ndarray
@@ -114,7 +125,6 @@ class EdgeLifecycleTracker:
     a fair re-evaluation instead of rotting at the bottom of the utility rank.
     """
 
-    PRUNE_TO_SUSPECT = 1
     PRUNE_TO_PROBATION = 2
     PRUNE_TO_REMOVED = 4
 
@@ -170,6 +180,7 @@ class RoverSimulation:
         faults: Optional[List[FaultEvent]] = None,
         gnn_weights=None,
         collect_training: bool = False,
+        measure_full_gnn: bool = True,
     ) -> None:
         if pruner not in ("qubo", "full", "threshold", "topk"):
             raise ValueError(f"unknown pruner {pruner}")
@@ -190,6 +201,7 @@ class RoverSimulation:
         self.freshness_tau = freshness_tau
         self.base_packet_loss = packet_loss
         self.collect_training = collect_training
+        self.measure_full_gnn = measure_full_gnn
 
         self.state: Dict[Node, RoverState] = {}
         for n in self.nodes:
@@ -247,7 +259,7 @@ class RoverSimulation:
         for n in self.nodes:
             s = self.state[n]
             for f in self._active_faults(cycle):
-                if f.kind == "reliability_drop" and f.node == n:
+                if f.kind == "reliability_drop" and (f.node is None or f.node == n):
                     s.reliability = max(
                         0.0, self.base_reliability[n] - f.magnitude
                     )
@@ -259,7 +271,7 @@ class RoverSimulation:
                         0, 10,
                     )
             if cycle >= max((f.cycle + f.duration for f in self.faults
-                             if f.kind == "reliability_drop" and f.node == n),
+                             if f.kind == "reliability_drop" and (f.node is None or f.node == n)),
                             default=-1):
                 s.reliability = self.base_reliability[n]
             s.position = np.clip(s.position + self.rng.normal(0, 0.8, size=2), 0, 10)
@@ -418,20 +430,25 @@ class RoverSimulation:
         }
 
         # --- GNN inference: ONE pass per cycle on the working graph ---
-        t0 = time.perf_counter()
         hidden = self.gnn.hidden_states(self.nodes, node_features, kept, features)
         scores = {
             tid: {n: self.gnn.score_from_hidden(n, hidden[n], node_features[n], t)
                   for n in self.nodes}
             for tid, t in tasks.items()
         }
-        t_gnn = time.perf_counter() - t0
-        # comparison: what GNN inference would cost on the FULL graph
-        t0 = time.perf_counter()
-        self.gnn.hidden_states(self.nodes, node_features, edges, features)
-        t_gnn_full = time.perf_counter() - t0
+        # timing: median of repeats (single-shot perf_counter is noise at
+        # sub-ms scale); full-graph comparison is measurement overhead, so it
+        # is gated behind measure_full_gnn
+        t_gnn = _timed_median_ms(
+            lambda: self.gnn.hidden_states(self.nodes, node_features, kept,
+                                           features))
+        if self.measure_full_gnn:
+            t_gnn_full = _timed_median_ms(
+                lambda: self.gnn.hidden_states(self.nodes, node_features,
+                                               edges, features))
+        else:
+            t_gnn_full = float("nan")
 
-        t0 = time.perf_counter()
         if self.random_assignment:
             eligible = [
                 n for n in self.nodes
@@ -444,10 +461,10 @@ class RoverSimulation:
             assignment = {tid: int(n) for tid, n in zip(tasks, chosen)}
         else:
             # assign_tasks expects {node: {task: score}}
-            assignment = assign_tasks(
-                {n: {tid: s[n] for tid, s in scores.items()}
-                 for n in self.nodes}
-            )
+            node_scores = {n: {tid: s[n] for tid, s in scores.items()}
+                           for n in self.nodes}
+            assignment = assign_tasks(node_scores)
+            t_assign = _timed_median_ms(lambda: assign_tasks(node_scores))
             # epsilon-exploration: occasionally probe another eligible node
             for tid in list(assignment):
                 if self.rng.random() >= self.exploration:
@@ -464,7 +481,8 @@ class RoverSimulation:
                     assignment[tid] = int(
                         candidates[self.rng.integers(len(candidates))]
                     )
-        t_assign = time.perf_counter() - t0
+        if self.random_assignment:
+            t_assign = float("nan")
 
         # --- outcomes, trust update, training data ---
         successes = 0
@@ -492,7 +510,7 @@ class RoverSimulation:
             [self.trust.get(n) for n in self.nodes],
             [self.state[n].reliability for n in self.nodes],
         ))
-        for k, v in (("build", t_build), ("solve", t_solve),
+        for k, v in (("build", t_build * 1e3), ("solve", t_solve * 1e3),
                      ("gnn", t_gnn), ("assign", t_assign),
                      ("gnn_full", t_gnn_full)):
             self.timings[k].append(v)
@@ -533,8 +551,10 @@ class RoverSimulation:
         total_ok = sum(int(r * self.tasks_per_cycle + 1e-9)
                        for r in self.success_history)
         total = len(self.success_history) * self.tasks_per_cycle
-        timings = {k: float(np.mean(v)) * 1e3 if v else 0.0
-                   for k, v in self.timings.items()}  # ms
+        timings = {}
+        for k, v in self.timings.items():
+            finite = [x for x in v if np.isfinite(x)]
+            timings[k] = float(np.mean(finite)) if finite else float("nan")
         return {
             "success_rate": total_ok / max(1, total),
             "timings_ms": timings,
@@ -576,7 +596,7 @@ class RoverSimulation:
         return s
 
 
-def run_benchmark(steps: int = 20, seeds: int = 3) -> None:
+def run_benchmark(steps: int = 20, seeds: int = 10) -> None:
     """
     Identical scenario through each pruner; the paper's headline table.
     Uses a denser fleet (10 rovers) — at 6 rovers the graph is so sparse

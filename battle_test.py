@@ -19,6 +19,12 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+try:
+    import neal  # optional: real QUBO backend (pip install dwave-neal)
+    HAVE_NEAL = True
+except ImportError:
+    HAVE_NEAL = False
+
 from main import (
     EdgeFeatures,
     EdgeSelectionQUBO,
@@ -771,6 +777,36 @@ def test_sa_quality_report() -> None:
     check("H.projected", np.mean(gaps < 1e-9) >= 0.9,
           f"projected SA exact rate too low: {np.mean(gaps < 1e-9)*100:.0f}%")
 
+    # real QUBO backend (dwave-neal) on the same Q matrices, when installed
+    if HAVE_NEAL:
+        sampler = neal.SimulatedAnnealingSampler()
+        gaps = []
+        for i, (b, e_opt, warm_edges) in enumerate(instances):
+            Q, c, names = b.get_qubo()
+            n = Q.shape[0]
+            # dimod convention: E = sum_i Qii xi + sum_{i<j} Qij xi xj
+            Qd = {}
+            for a in range(n):
+                if Q[a, a] != 0.0:
+                    Qd[(a, a)] = float(Q[a, a])
+                for bb in range(a + 1, n):
+                    if Q[a, bb] != 0.0:
+                        Qd[(a, bb)] = float(2.0 * Q[a, bb])
+            sample = sampler.sample_qubo(Qd, num_reads=100, seed=i).first.sample
+            z = np.array([sample[k] for k in range(n)], dtype=float)
+            try:
+                z = b.build_feasible_solution(set(b.selected_edges(z)))
+                e = b.energy(z)
+            except ValueError:
+                e = b.energy(b.build_feasible_solution(warm_edges))
+            gaps.append(norm_gap(e, e_opt))
+        gaps = np.array(gaps)
+        print(f"  dwave-neal on Q:     exact={np.mean(gaps < 1e-9)*100:4.0f}%  "
+              f"mean_gap={gaps.mean():.4f}  p90={np.percentile(gaps, 90):.4f}")
+    else:
+        print("  dwave-neal not installed; local bit-SA above is the "
+              "same algorithm class and stands in as the Q-sampler baseline")
+
     # do random restarts alone (no warm start) reach feasibility?
     infeas = 0
     for i, (b, _, _) in enumerate(instances):
@@ -1111,6 +1147,87 @@ def test_benchmark_gap() -> None:
           f"p90 BKS gap {np.percentile(bks_arr, 90):.4f}")
 
 
+# ----------------------------------------------------------------------
+# L. Review-2 regression tests
+# ----------------------------------------------------------------------
+
+
+def test_review2_regressions() -> None:
+    print("L. Review-2 regressions")
+
+    # L1 (E1): connectivity-constrained instance with NO warm start must
+    # still solve — spanning-tree-seeded random starts
+    f05 = F(processing_cost=0.2)
+    b = EdgeSelectionQUBO(
+        nodes=[0, 1, 2, 3], edges=[(0, 1), (1, 2), (2, 3)],
+        features={(0, 1): f05, (1, 2): f05, (2, 3): f05},
+        required_nodes=[0, 1, 2, 3], root=0,
+        degree_limits={i: 2 for i in range(4)},
+    )
+    res = ProjectedEdgeAnnealing(b, restarts=4, seed=0).run()
+    check("L1.chain-bootstrap",
+          set(res.kept_edges) == {(0, 1), (1, 2), (2, 3)}
+          and not res.violated_constraints,
+          f"kept={res.kept_edges} violations={res.violated_constraints}")
+
+    # L2 (E2): greedy repair restores feasibility
+    from scale_runner import make_sparse_instance, repair_to_feasible
+    from simulation import edge_utility
+    rng = np.random.default_rng(21)
+    _, edges, feats, prev, dlim, budget = make_sparse_instance(rng, 10)
+    b = EdgeSelectionQUBO(nodes=list(range(10)), edges=edges, features=feats,
+                          previous_decisions=prev, degree_limits=dlim,
+                          global_budget=budget)
+    greedy = set(sorted(edges, key=lambda e: -edge_utility(feats[e]))[:17])
+    z = np.zeros(len(b.variables))
+    for e in b.optional_edges:
+        if e in greedy:
+            z[b.edge_var[e]] = 1
+    check("L2.greedy-was-infeasible", bool(b.check_constraints(z)),
+          "test premise broken: greedy should violate constraints here")
+    repaired, ok = repair_to_feasible(b, greedy, feats)
+    z = np.zeros(len(b.variables))
+    for e in b.optional_edges:
+        if e in repaired:
+            z[b.edge_var[e]] = 1
+    check("L2.repair-feasible", ok and not b.check_constraints(z),
+          f"repair failed: {b.check_constraints(z)}")
+
+    # L3: criticality scales the probability, not the logit — direction must
+    # be sign-independent (higher criticality never INCREASES a score)
+    from trust_gnn import NodeFeatures, TaskRequirements, TrustGNN
+    gnn = TrustGNN()
+    feats = {
+        0: NodeFeatures(trust=0.2, battery=0.9, load=0.0, capability=0.5),
+        1: NodeFeatures(trust=0.9, battery=0.9, load=0.0, capability=0.5),
+    }
+    hi = TaskRequirements(criticality=0.9)
+    lo = TaskRequirements(criticality=0.2)
+    for n in (0, 1):
+        s_hi = gnn.scores([0, 1], feats, [], hi)[n]
+        s_lo = gnn.scores([0, 1], feats, [], lo)[n]
+        check(f"L3.crit-sign n{n}", s_hi <= s_lo + 1e-12,
+              f"critical task raised score: {s_lo} -> {s_hi}")
+
+    # L4: global reliability_drop (node=None) actually applies
+    from simulation import FaultEvent, RoverSimulation
+    sim = RoverSimulation(steps=4, seed=2, faults=[
+        FaultEvent(cycle=1, kind="reliability_drop", node=None,
+                   magnitude=0.9, duration=2)])
+    sim._move(1)
+    base = sim.base_reliability
+    dropped = all(sim.state[n].reliability <= max(0.0, base[n] - 0.9) + 1e-9
+                  for n in sim.nodes)
+    check("L4.global-fault", dropped, "node=None fault did not apply globally")
+
+    # L5: timing sanity — gnn timing is a non-negative median, gnn_full
+    # skippable via flag
+    s = RoverSimulation(steps=3, seed=2, measure_full_gnn=False).run(verbose=False)
+    check("L5.gnn-full-gated",
+          np.isnan(s["timings_ms"]["gnn_full"]) or s["timings_ms"]["gnn_full"] == 0.0,
+          f"gnn_full measured despite flag: {s['timings_ms']}")
+
+
 if __name__ == "__main__":
     test_invariants()
     test_brute_force()
@@ -1122,6 +1239,7 @@ if __name__ == "__main__":
     test_sa_quality_report()
     test_gnn()
     test_simulation_harness()
+    test_review2_regressions()
     test_benchmark_gap()
     print(f"\n==== {PASS} passed, {FAIL} failed ====")
     if FAILURES:

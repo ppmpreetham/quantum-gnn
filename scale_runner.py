@@ -28,6 +28,12 @@ def make_sparse_instance(rng: np.random.Generator, n: int, k: int = 4):
     """Range-limited graph: each node links to its k nearest neighbors."""
     pos = rng.uniform(0, 100, size=(n, 2))
     edges = set()
+    # random spanning tree first: k-NN graphs can be disconnected, and the
+    # connectivity constraint must be exercisable
+    perm = rng.permutation(n).tolist()
+    for i in range(1, n):
+        j = int(rng.integers(0, i))
+        edges.add((min(perm[i], perm[j]), max(perm[i], perm[j])))
     for i in range(n):
         d = np.linalg.norm(pos - pos[i], axis=1)
         for j in np.argsort(d)[1:k + 1]:
@@ -41,6 +47,41 @@ def make_sparse_instance(rng: np.random.Generator, n: int, k: int = 4):
     degree_limits = {i: 4 for i in range(n)}
     budget = int(0.6 * len(edges) * 5)
     return pos, edges, features, previous, degree_limits, budget
+
+
+def repair_to_feasible(builder: EdgeSelectionQUBO, selected, features) -> tuple:
+    """
+    Drop lowest-utility edges until degree/budget constraints hold.
+    Connectivity cannot be repaired by removal; report it as a flag.
+    Returns (edge_set, fully_feasible).
+    """
+    sel = set(selected)
+    for _ in range(len(sel) + 1):
+        z = np.zeros(len(builder.variables))
+        for e in builder.optional_edges:
+            if e in sel:
+                z[builder.edge_var[e]] = 1
+        issues = builder.check_constraints(z)
+        if not issues:
+            return sel, True
+        if any(i.startswith("connectivity") for i in issues):
+            return sel, False
+        over_nodes = set()
+        budget_over = False
+        for i in issues:
+            if i.startswith("degree"):
+                over_nodes.add(int(i.split("[")[1].split("]")[0]))
+            elif i.startswith("budget"):
+                budget_over = True
+        drop_candidates = [
+            e for e in sel
+            if e not in builder.hard_critical
+            and (e[0] in over_nodes or e[1] in over_nodes or budget_over)
+        ]
+        if not drop_candidates:
+            return sel, False
+        sel.remove(min(drop_candidates, key=lambda e: edge_utility(features[e])))
+    return sel, False
 
 
 def main() -> None:
@@ -92,11 +133,12 @@ def main() -> None:
             e_proj = result.energy
         t_solve = time.perf_counter() - t0
 
-        # greedy top-K baseline with the SAME edge budget
+        # greedy top-K baseline with the SAME edge budget, repaired to
+        # feasibility (raw greedy violates degree/budget caps)
         k = len(kept)
         ranked = sorted(edges, key=lambda e: -edge_utility(features[e]))
-        greedy = set(ranked[:k])
-        e_greedy = builder.soft_energy(greedy)
+        greedy, greedy_ok = repair_to_feasible(builder, set(ranked[:k]), features)
+        e_greedy = builder.soft_energy(greedy) if greedy_ok else float("nan")
 
         # GNN latency: full vs pruned graph
         node_features = {

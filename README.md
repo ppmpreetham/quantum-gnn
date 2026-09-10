@@ -50,3 +50,6 @@ optimality-gap benchmark):
 ```bash
 uv run battle_test.py
 ```
+
+If `dwave-neal` is installed (optional), section H additionally benchmarks the
+real neal QUBO sampler against the same Q matrices.

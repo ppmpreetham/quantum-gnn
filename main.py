@@ -936,9 +936,72 @@ class ProjectedEdgeAnnealing:
         z = self.builder.build_feasible_solution(selected)
         return z, self.builder.soft_energy(selected)
 
+    def _random_spanning_tree(self) -> Optional[set[Edge]]:
+        """
+        Prim-style random spanning tree of the root's component that respects
+        residual degree caps (hard edges pre-consume degree), so the result is
+        feasible by construction whenever the caps allow any tree.
+        """
+        builder = self.builder
+        assert builder.root is not None
+        adjacency = {n: [] for n in builder.nodes}
+        for u, v in builder.edges:
+            adjacency[u].append(v)
+            adjacency[v].append(u)
+
+        residual = {
+            n: builder.degree_limits.get(n, len(builder.nodes))
+            - sum(n in e for e in builder.hard_critical)
+            for n in builder.nodes
+        }
+        # reachable component of the root
+        target = {builder.root}
+        stack = [builder.root]
+        while stack:
+            for v in adjacency[stack.pop()]:
+                if v not in target:
+                    target.add(v)
+                    stack.append(v)
+
+        in_tree = {builder.root}
+        tree: set[Edge] = set()
+        while in_tree != target:
+            frontier = [
+                (u, v)
+                for u in in_tree
+                for v in adjacency[u]
+                if v not in in_tree and residual[u] > 0 and residual[v] > 0
+            ]
+            if not frontier:
+                return None
+            u, v = frontier[int(self.rng.integers(len(frontier)))]
+            tree.add(canonical_edge((u, v)))
+            residual[u] -= 1
+            residual[v] -= 1
+            in_tree.add(v)
+        return tree
+
     def _random_feasible_start(self) -> set[Edge]:
         builder = self.builder
         selected = set(builder.hard_critical)
+        if builder.required_nodes:
+            # Feasibility is NOT prefix-monotone under connectivity: growing
+            # edge-by-edge can never pass through the infeasible partial sets
+            # to reach a connected one. Seed with a random spanning tree of
+            # the required component instead, retrying on degree/budget caps.
+            for _ in range(10):
+                tree = self._random_spanning_tree()
+                if tree is None:
+                    continue
+                candidate = set(builder.hard_critical) | tree
+                try:
+                    builder.build_feasible_solution(candidate)
+                except ValueError:
+                    continue
+                selected = candidate
+                break
+            else:
+                return selected  # infeasible; run() will reject it
         order = self.rng.permutation(len(builder.optional_edges))
         for k in order:
             candidate = selected | {builder.optional_edges[k]}

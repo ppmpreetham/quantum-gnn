@@ -164,10 +164,12 @@ class TrustGNN:
         ):
             return 0.0
         raw = float(self.w.out @ h_n) + self.w.out_bias
-        # mission-critical tasks amplify trust requirements
+        s = float(_sigmoid(np.array(raw)))
+        # mission-critical tasks amplify trust requirements; scale the
+        # PROBABILITY (not the logit) so the direction is sign-independent
         if task.criticality > 0.5:
-            raw *= 0.5 + 0.5 * f.trust
-        return float(_sigmoid(np.array(raw)))
+            s *= 0.5 + 0.5 * f.trust
+        return s
 
     def scores(
         self,

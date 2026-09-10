@@ -151,3 +151,168 @@ prove *the formulation earns its place*.
 4. P0-3 (dwave-neal backend) and P1-9 (train or rename the GNN) — the two claim-shaping decisions.
 5. P2-10 (scale runner) — the QUBO's evidence base.
 6. P3 in one cleanup commit.
+
+---
+---
+
+# Review 2 — Mathematical Audit (2026-09-11)
+
+After the review-1 changes were implemented (baselines ✓, latency timing ✓, trust
+Spearman ✓, faults + recovery ✓, live features ✓, readout training ✓, scale runner ✓,
+hygiene ✓ — `.gitignore`, files committed, README fixed). Suite: **452 passed, 0 failed**.
+This pass derives the formulation from the spec and verifies the implementation
+mathematically, term by term.
+
+## The formulation under test
+
+For optional edges $O = E \setminus H$, hard-critical $H$, required set $R$ with root
+$r$, $m = |R|-1$, quantized integer costs $c_e \ge 1$, slack/flow integers binary-encoded
+($s = \sum_k 2^k b_k$):
+
+$$
+H(z) = \underbrace{\sum_{e \in O} (-U_e + \lambda)\, x_e}_{\text{utility + sparsity}}
++ \underbrace{\eta \sum_{e \in O} (x_e - x_e^{t-1})^2}_{\text{stability}}
++ \underbrace{\rho_d \sum_{i \in V} \Big( \textstyle\sum_{e \in \delta_O(i)} x_e + s_i - (D_i - \deg_H(i)) \Big)^2}_{\text{degree}}
++ \underbrace{\rho_C \Big( \textstyle\sum_{e \in O} c_e x_e + s_C - (K - c_H) \Big)^2}_{\text{budget}}
++ \underbrace{\rho_F \sum_{v \in V} (\text{in}_v - \text{out}_v - b_v)^2}_{\text{flow conservation}}
++ \underbrace{\rho_{FC} \sum_{e \in E} (f_{uv} + f_{vu} + q_e - m\, x_e)^2}_{\text{flow capacity}}
+$$
+
+with $b_r = -m$, $b_v = 1$ for $v \in R \setminus \{r\}$, $b_v = 0$ otherwise; $x_e \coloneqq 1$ for $e \in H$.
+
+## Mathematical verification — what is CORRECT
+
+| Claim | Method | Result |
+|---|---|---|
+| Q matrix ≡ spec $H(z)$ | Independent probe: 40 random instances × 8 states, variables decoded **by name**, energy re-derived from the formula above | max diff **2.3e-10** (float noise) — construction exact |
+| Square-penalty expansion | Algebra: linear $2ca_i + a_i^2$, off-diagonal $2a_ia_j$ halved into symmetric Q | Correct |
+| SA flip increment $\Delta E = 2\delta(Qz)_i + Q_{ii}$, $\delta = 1-2z_i$ | Derived from $E = z^TQz$ | Correct |
+| Penalty dominance at **all** sizes | Per-unit argument: one unit of degree/budget violation costs $\rho k^2 \ge 100$ but unlocks ≤ 1 edge of gain ≤ 1 (since $c_e \ge 1$); one flow violation costs 500 vs gain ≤ $\deg \cdot \lambda \approx 0.5$ | Holds for any $\lvert O \rvert$ (quadratic penalty vs linear gain) |
+| Bit-width sufficiency | $\lceil\log_2(\max+1)\rceil$ covers every equality-feasible value; feasible defaults exist ($x{=}0, s{=}D$) | Correct |
+| `soft_energy` ≡ QUBO energy on feasible states | Test J.soft-eq + derivation | Correct |
+| Spearman implementation | Average ranks (ties) + Pearson on ranks | Correct |
+| Logistic-regression readout gradients | $\nabla_w = X^T(p{-}y)/n + \ell_2 w$ | Correct |
+| Brute-force optimum never penalty-leaking | B.bf-feas over 38 instances | Correct |
+
+**Verdict: the QUBO formulation and its matrix construction are mathematically sound.
+No errors in the math of `main.py`'s encoding.**
+
+## Errors found — by mathematical analysis, verified empirically
+
+### E1 (HIGH) — `ProjectedEdgeAnnealing` cannot bootstrap under connectivity constraints
+
+`_random_feasible_start` grows a set edge-by-edge, keeping only candidates that are
+already feasible. That assumes feasibility is **prefix-monotone** — true for
+degree/budget (empty set is feasible) but **false for connectivity** (no single edge
+connects a chain). Verified on a 4-node chain, all nodes required:
+
+- `_random_feasible_start()` returns `[]` → `connectivity_missing=[1, 2, 3]`
+- `run()` with no warm start raises *"No feasible edge subset exists"* **even though
+  the full chain is feasible**
+- with a warm start, 4/4 random restarts attempted, 0 usable — **restarts are dead
+  weight** whenever connectivity is on; every result rides on the single warm start
+
+Consequences (each verified):
+
+1. **`simulation._prune` silently drops connectivity at the worst moment.** When the
+   warm set (previous kept ∩ current edges) no longer connects the root's component —
+   i.e. right after a topology change, the paper's core scenario — attempts 0–1
+   (both with `required_nodes`) always raise and the code falls through to
+   budget-only pruning. The "pruning never disconnects the mission" guarantee lapses
+   exactly when the graph is dynamic.
+2. **`scale_runner` never enforces connectivity at any size.** Its warm start
+   (`set(edges)`) is infeasible under degree caps (k-NN graphs give every node
+   degree ≥ 4, cap = 4), so the connectivity attempt always raises and silently falls
+   back. Proof from the printed table's own variable counts: n=10 → 24 edge vars +
+   30 degree bits + 7 budget bits = 61 (exact, **zero flow variables**); n=20 →
+   54+60+8 = 122 (exact). The docstring's "connectivity enabled for n ≤ 20" is
+   false in practice.
+
+**Fix:** seed random starts with a random spanning tree of the required component
+(hard edges ∪ random BFS/DFS tree from the root, rejected if degree/budget caps are
+violated, a few retries). $O(V+E)$ per attempt. This restores restart diversity,
+field degradation, and the scale runner's stated design.
+
+### E2 (MEDIUM) — `scale_runner` greedy baseline is infeasible at every size
+
+Greedy top-K ignores degree caps and budget. Measured (scale_runner's own instances):
+degree violations at 2–10 nodes per size, budget overruns 91>72, 155>144, 244>215,
+450>386. So `E_greedy` is the soft energy of an **unachievable** edge set compared
+against the QUBO's feasible one. (The QUBO wins anyway — fixing this only
+strengthens the result.) **Fix:** repair greedy (drop worst-violating edges until
+feasible) or report an infeasibility flag in the table.
+
+### E3 (MEDIUM) — "neal-equivalent backend" is a label, not an integration
+
+Battle test H now says *“QUBO bit-sampler on Q (neal-equivalent backend)”* but
+`dwave-neal` is not integrated; the sampler is still the local bit-flip SA, which the
+same test shows is 52–56% exact vs the projected annealer's 100%. Review-1 P0-3
+(“make the solved-as-QUBO claim real”) remains open. Either wire in `dwave-neal`
+(one pip dependency, drop-in for `SimulatedAnnealing`) or revert the label.
+
+### E4 (MEDIUM) — latency numbers at small n are measurement noise
+
+The benchmark's own output exposes it: for the `full` pruner, `gnn` (0.31 ms) and
+`gnn_full` (0.22 ms) are **identical work**, ±30% apart from single-shot
+`perf_counter` calls at sub-millisecond scale. All gnn-column differences between
+pruners (0.28–0.31) are within noise. And the honest headline at 10 rovers:
+**QUBO spends ~134 ms solving to save ~0.05 ms of GNN inference** — the end-to-end
+latency claim is not supported at this scale.
+**Fix:** report median/min of ~50 repeats (or an op-count proxy: edges × layers),
+and move the latency claim to where it can be true — larger fleets, or wall-clock on
+the actual Pi. The cloud-amortization story (solve offline, apply lightweight policy)
+is the other honest route and is still unimplemented (review-1 P1-8).
+
+### Minor notes
+
+- `score_from_hidden` multiplies the **logit** by $(0.5 + 0.5\,\text{trust})$ for
+  critical tasks; for negative logits this *raises* the score — sign interaction
+  contrary to intent (gated nodes mostly have positive logits, so impact is small).
+- Readout training is off-policy: samples only from assigned nodes → selection bias;
+  the learned compute weight (−0.33, "more available compute → less success") is a
+  confounding artifact worth a footnote.
+- `FaultEvent(kind="reliability_drop", node=None)` is accepted but silently does
+  nothing (`f.node == n` never true); `PRUNE_TO_SUSPECT` is a dead constant.
+- `recovery_times` reports "recovered after `duration`" even for faults that never
+  affected success (baseline met immediately after expiry).
+- `gnn_full` timing runs inside every production cycle — measurement overhead in the
+  loop it measures; fine for now, worth gating behind a debug flag later.
+- Benchmark arms at 3 seeds × 20 cycles are within noise of each other
+  (65.0–67.8%); the paper table needs ≥10 seeds or paired-per-cycle statistics.
+
+## Review-2 bottom line
+
+The **mathematics of the formulation is correct and now independently proven** —
+that box is closed. What the audit exposed is one real algorithmic bug (E1) whose
+effect is that the flagship connectivity guarantee silently deactivates in exactly
+the dynamic scenarios the research targets, plus a baseline-fairness bug (E2) in the
+new evidence harness. Both are small, localized fixes (a spanning-tree start; a
+feasibility repair). E3/E4 are honesty items about claims, not correctness.
+
+---
+---
+
+# Review 2 — Resolution (2026-09-11)
+
+All items addressed; suite **459 passed, 0 failed** (incl. real `dwave-neal` backend).
+
+- **E1 (fixed, verified):** `ProjectedEdgeAnnealing` random starts are now seeded with
+  a degree-cap-aware random spanning tree (Prim-style, residual caps). Chain graph with
+  no warm start now solves (regression L1). Consequences visible and intended: the
+  simulation's connectivity constraint is now actually active (solve cost rose
+  0.13s → 1.76s/cycle — the flagship guarantee's real price), and `scale_runner`
+  enforces connectivity at n=10/20 (427/1076 vars, 12.5s/41s).
+- **E2 (fixed):** greedy baseline repaired to feasibility (`repair_to_feasible`);
+  connectivity-infeasible cases are flagged as `nan`. As predicted, fixing this
+  strengthens the QUBO result: E_proj vs E_greedy is now −36.7 vs −24.3 at n=50
+  (was −31.4 vs −30.2 against the infeasible greedy).
+- **E3 (fixed):** real `dwave-neal` integrated (optional import) and benchmarked on
+  the same Q matrices: neal 60% exact / mean gap 0.083 vs projected annealer 100% /
+  0.000 (local bit-SA: 52–56% / 0.145). The ordering predicted in review-1 holds.
+- **E4 (fixed):** GNN timings are now medians of 25 repeats; `gnn_full` measurement
+  gated behind `measure_full_gnn`; benchmark runs 10 seeds. Benchmark table (10 rovers,
+  10 seeds) confirms review-2's suspicion: success across pruners is within noise
+  (63.8–65.2%) — at this scale the pruners differ in solve cost, not task success.
+- **Minors:** criticality now scales the probability, not the logit (L3);
+  `reliability_drop` with `node=None` applies globally (L4); dead constant removed.
+  Selection-bias footnote for readout training acknowledged (left as future work).
