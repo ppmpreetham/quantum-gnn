@@ -161,9 +161,31 @@ class EdgeSelectionQUBO:
             if edge[0] not in node_set or edge[1] not in node_set:
                 raise ValueError(f"Unknown node in edge {edge}")
 
-        missing = set(self.optional_edges) - set(self.features)
+        edge_set = set(self.edges)
+
+        unknown_hard = self.hard_critical - edge_set
+        if unknown_hard:
+            raise ValueError(
+                f"hard_critical_edges not present in edges: {sorted(unknown_hard)}"
+            )
+
+        missing = edge_set - set(self.features)
         if missing:
-            raise ValueError(f"Missing features for optional edges: {sorted(missing)}")
+            raise ValueError(f"Missing features for edges: {sorted(missing)}")
+
+        unknown_feature_edges = set(self.features) - edge_set
+        if unknown_feature_edges:
+            raise ValueError(
+                f"Features given for edges not in the graph: {sorted(unknown_feature_edges)}"
+            )
+
+        # previous_decisions are historical: entries for edges that have since
+        # disappeared are ignored (dynamic graphs), but values must be binary.
+        for edge, value in self.previous.items():
+            if value not in (0, 1):
+                raise ValueError(
+                    f"previous_decisions[{edge}] must be 0 or 1, got {value}"
+                )
 
         for edge, feature in self.features.items():
             for name, value in vars(feature).items():
@@ -240,8 +262,8 @@ class EdgeSelectionQUBO:
             fixed_degree[v] += 1
             fixed_cost += self.edge_cost_units[(u, v)]
 
-        for node in self.nodes:
-            if fixed_degree[node] > self.degree_limits.get(node, 0):
+        for node, limit in self.degree_limits.items():
+            if fixed_degree[node] > limit:
                 raise ValueError(
                     f"Hard-critical edges exceed degree limit for node {node}"
                 )
@@ -287,8 +309,8 @@ class EdgeSelectionQUBO:
             fixed_degree[u] += 1
             fixed_degree[v] += 1
 
-        for node in self.nodes:
-            remaining = self.degree_limits.get(node, 0) - fixed_degree[node]
+        for node, limit in self.degree_limits.items():
+            remaining = limit - fixed_degree[node]
             self.degree_slack_bits[node] = self.add_integer_bits(
                 f"s_degree_{node}", remaining
             )
@@ -310,7 +332,7 @@ class EdgeSelectionQUBO:
                     f"f_{v}_{u}", max_flow
                 )
                 self.flow_slack_bits[(u, v)] = self.add_integer_bits(
-                    f"q_{u}_{v}", 2 * max_flow
+                    f"q_{u}_{v}", max_flow
                 )
 
     # ------------------------------------------------------------------
@@ -429,8 +451,8 @@ class EdgeSelectionQUBO:
             fixed_degree[u] += 1
             fixed_degree[v] += 1
 
-        for node in self.nodes:
-            rhs = self.degree_limits.get(node, 0) - fixed_degree[node]
+        for node, limit in self.degree_limits.items():
+            rhs = limit - fixed_degree[node]
             terms = [
                 (self.edge_var[edge], 1.0)
                 for edge in self.optional_edges
@@ -549,6 +571,48 @@ class EdgeSelectionQUBO:
     def get_qubo(self) -> Tuple[np.ndarray, float, List[str]]:
         return self.Q.copy(), float(self.constant), list(self.variables)
 
+    def soft_energy(self, selected: Iterable[Edge]) -> float:
+        """
+        Soft-objective energy of an edge selection, assuming feasibility
+        (all penalty terms are zero). For any feasible state z this equals
+        energy(z), but costs O(m) instead of O(V^2).
+        """
+        cfg = self.cfg
+        selected = {canonical_edge(e) for e in selected}
+        weights = np.array(
+            [
+                cfg.w_trust,
+                cfg.w_link,
+                cfg.w_battery,
+                cfg.w_proximity,
+                cfg.w_freshness,
+                cfg.w_task,
+            ],
+            dtype=float,
+        )
+        total = 0.0
+        for edge in self.optional_edges:
+            f = self.features[edge]
+            utility = float(
+                weights
+                @ np.array(
+                    [
+                        f.trust,
+                        f.link_quality,
+                        f.battery,
+                        f.proximity,
+                        f.freshness,
+                        f.task_criticality,
+                    ],
+                    dtype=float,
+                )
+            )
+            x = int(edge in selected)
+            if x:
+                total += -utility + cfg.edge_penalty
+            total += cfg.stability_penalty * (x - self.previous.get(edge, 0)) ** 2
+        return total
+
     def energy(self, z: np.ndarray) -> float:
         z = np.asarray(z, dtype=float)
         if z.shape != (len(self.variables),):
@@ -571,9 +635,8 @@ class EdgeSelectionQUBO:
         issues: List[str] = []
 
         # Degree constraints.
-        for node in self.nodes:
+        for node, limit in self.degree_limits.items():
             degree = sum(node in edge for edge in selected)
-            limit = self.degree_limits.get(node, 0)
             if degree > limit:
                 issues.append(f"degree[{node}]={degree}>{limit}")
 
@@ -636,13 +699,13 @@ class EdgeSelectionQUBO:
             raise ValueError(f"Selected graph is infeasible: {issues}")
 
         # Degree slack.
-        for node in self.nodes:
+        for node, limit in self.degree_limits.items():
             fixed_degree = sum(node in e for e in self.hard_critical)
             optional_degree = sum(
                 node in e and e not in self.hard_critical
                 for e in selected
             )
-            rhs = self.degree_limits.get(node, 0) - fixed_degree
+            rhs = limit - fixed_degree
             slack_value = rhs - optional_degree
             self._set_integer_bits(z, self.degree_slack_bits[node], slack_value)
 
@@ -749,12 +812,12 @@ class EdgeSelectionQUBO:
             fixed_degree[u] += 1
             fixed_degree[v] += 1
 
-        for node in self.nodes:
+        for node, limit in self.degree_limits.items():
             optional_degree = sum(
                 node in e and e not in self.hard_critical
                 for e in selected
             )
-            rhs = self.degree_limits.get(node, 0) - fixed_degree[node]
+            rhs = limit - fixed_degree[node]
             slack = self._decode_int(z, self.degree_slack_bits[node])
             total += (optional_degree + slack - rhs) ** 2
 
@@ -816,6 +879,181 @@ class EdgeSelectionQUBO:
             variable_names=list(self.variables),
             violated_constraints=issues,
         )
+
+
+class ProjectedEdgeAnnealing:
+    """
+    Simulated annealing over feasible edge subsets.
+
+    Bit-level SA on the penalty-encoded QUBO cannot cross penalty barriers
+    (~100+ per violated constraint) with single-bit flips, so it effectively
+    never leaves its warm start. This solver instead toggles optional edges at
+    graph level (single toggles and two-edge swaps) and projects every
+    candidate back to a fully feasible QUBO state via
+    EdgeSelectionQUBO.build_feasible_solution. Candidates that cannot be
+    projected are rejected. The objective is the same QUBO energy.
+    """
+
+    def __init__(
+        self,
+        builder: EdgeSelectionQUBO,
+        *,
+        initial_temperature: float = 1.0,
+        final_temperature: float = 1e-2,
+        cooling_rate: float = 0.998,
+        steps_per_temperature: int = 4,
+        swap_probability: float = 0.5,
+        restarts: int = 5,
+        seed: int = 42,
+        initial_edge_sets: Optional[Sequence[Iterable[Edge]]] = None,
+    ) -> None:
+        if not 0.0 < cooling_rate < 1.0:
+            raise ValueError("cooling_rate must be in (0,1)")
+        if initial_temperature <= 0 or final_temperature <= 0:
+            raise ValueError("temperatures must be positive")
+        if final_temperature >= initial_temperature:
+            raise ValueError("final_temperature must be below initial_temperature")
+        if steps_per_temperature <= 0 or restarts <= 0:
+            raise ValueError("steps_per_temperature and restarts must be positive")
+        if not 0.0 <= swap_probability <= 1.0:
+            raise ValueError("swap_probability must be in [0,1]")
+
+        self.builder = builder
+        self.initial_temperature = initial_temperature
+        self.final_temperature = final_temperature
+        self.cooling_rate = cooling_rate
+        self.steps = steps_per_temperature
+        self.swap_probability = swap_probability
+        self.restarts = restarts
+        self.rng = np.random.default_rng(seed)
+        self.initial_edge_sets = [
+            {canonical_edge(e) for e in edges} for edges in (initial_edge_sets or [])
+        ]
+
+    def _project(self, selected: set[Edge]) -> Tuple[np.ndarray, float]:
+        # build_feasible_solution validates feasibility; for feasible states
+        # the QUBO energy equals the soft objective, which is O(m).
+        z = self.builder.build_feasible_solution(selected)
+        return z, self.builder.soft_energy(selected)
+
+    def _random_feasible_start(self) -> set[Edge]:
+        builder = self.builder
+        selected = set(builder.hard_critical)
+        order = self.rng.permutation(len(builder.optional_edges))
+        for k in order:
+            candidate = selected | {builder.optional_edges[k]}
+            try:
+                builder.build_feasible_solution(candidate)
+            except ValueError:
+                continue
+            selected = candidate
+        return selected
+
+    def _polish(self, start: set[Edge], energy: float) -> Tuple[set[Edge], float]:
+        """
+        Deterministic local descent: alternate single-edge toggles and
+        pairwise-swap passes until a fixpoint (bounded rounds). Removes the
+        residual stochastic gap left by temperature scheduling.
+        """
+        options = self.builder.optional_edges
+        current, current_energy = set(start), energy
+
+        for _ in range(4):  # bounded fixpoint rounds
+            improved = False
+
+            toggle_improved = True
+            while toggle_improved:
+                toggle_improved = False
+                for edge in options:
+                    candidate = (
+                        (current | {edge}) if edge not in current
+                        else (current - {edge})
+                    )
+                    try:
+                        _, e = self._project(candidate)
+                    except ValueError:
+                        continue
+                    if e < current_energy - 1e-12:
+                        current, current_energy = candidate, e
+                        toggle_improved = True
+                        improved = True
+
+            for a in range(len(options)):
+                for bidx in range(a + 1, len(options)):
+                    e1, e2 = options[a], options[bidx]
+                    candidate = current ^ {e1, e2}
+                    try:
+                        _, e = self._project(candidate)
+                    except ValueError:
+                        continue
+                    if e < current_energy - 1e-12:
+                        current, current_energy = candidate, e
+                        improved = True
+
+            if not improved:
+                break
+        return current, current_energy
+
+    def _anneal(self, start: set[Edge]) -> Tuple[set[Edge], float]:
+        builder = self.builder
+        options = builder.optional_edges
+        if not options:
+            return set(start), builder.energy(builder.build_feasible_solution(start))
+
+        current = set(start)
+        _, current_energy = self._project(current)
+        best, best_energy = set(current), current_energy
+
+        temperature = self.initial_temperature
+        while temperature > self.final_temperature:
+            for _ in range(self.steps):
+                candidate = set(current)
+                edge = options[int(self.rng.integers(len(options)))]
+                if edge in candidate:
+                    candidate.discard(edge)
+                else:
+                    candidate.add(edge)
+                if self.rng.random() < self.swap_probability and len(options) > 1:
+                    edge2 = options[int(self.rng.integers(len(options)))]
+                    if edge2 in candidate:
+                        candidate.discard(edge2)
+                    else:
+                        candidate.add(edge2)
+                try:
+                    _, energy = self._project(candidate)
+                except ValueError:
+                    continue
+                delta = energy - current_energy
+                if delta <= 0.0 or self.rng.random() < exp(-delta / temperature):
+                    current, current_energy = candidate, energy
+                    if energy < best_energy:
+                        best, best_energy = set(candidate), energy
+            temperature *= self.cooling_rate
+        return self._polish(best, best_energy)
+
+    def run(self) -> QUBOResult:
+        best_edges: Optional[set[Edge]] = None
+        best_energy = float("inf")
+
+        for restart in range(self.restarts):
+            if restart < len(self.initial_edge_sets):
+                start = self.initial_edge_sets[restart]
+            else:
+                start = self._random_feasible_start()
+            try:
+                self.builder.build_feasible_solution(start)
+            except ValueError:
+                continue
+            edges, energy = self._anneal(start)
+            if energy < best_energy:
+                best_edges, best_energy = edges, energy
+
+        if best_edges is None:
+            raise ValueError(
+                "No feasible edge subset exists for the given constraints"
+            )
+        z = self.builder.build_feasible_solution(best_edges)
+        return self.builder.extract_solution(z)
 
 
 class SimulatedAnnealing:

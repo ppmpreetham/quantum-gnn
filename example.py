@@ -1,4 +1,9 @@
-from main import EdgeFeatures, EdgeSelectionQUBO, QUBOConfig, SimulatedAnnealing
+from main import (
+    EdgeFeatures,
+    EdgeSelectionQUBO,
+    ProjectedEdgeAnnealing,
+    QUBOConfig,
+)
 
 
 def main() -> None:
@@ -60,32 +65,18 @@ def main() -> None:
 
     # The following graph is a known feasible warm start for this example:
     # hard edge (0,1) + (0,2) + (0,3).
-    warm = builder.build_feasible_solution({(0, 1), (0, 2), (0, 3)})
+    warm_edges = {(0, 1), (0, 2), (0, 3)}
 
-    solver = SimulatedAnnealing(
-        Q,
-        constant,
-        initial_temperature=config.initial_temperature,
-        final_temperature=config.final_temperature,
-        cooling_rate=config.cooling_rate,
-        sweeps_per_temperature=config.sweeps_per_temperature,
-        restarts=config.restarts,
+    # ProjectedEdgeAnnealing anneals directly over feasible edge subsets
+    # (bit-level SA on the penalty-encoded Q cannot cross penalty barriers
+    # with single-bit flips, so it would barely leave its warm start).
+    solver = ProjectedEdgeAnnealing(
+        builder,
+        initial_edge_sets=[warm_edges],
+        restarts=10,
         seed=config.seed,
-        initial_states=[warm],
     )
-
-    best_z, _ = solver.run()
-
-    # IMPORTANT: SA is stochastic and may end on an infeasible auxiliary state.
-    # Reconstruct the best graph-level feasible state from the selected edges.
-    selected = set(builder.selected_edges(best_z))
-
-    try:
-        repaired = builder.build_feasible_solution(selected)
-        result = builder.extract_solution(repaired)
-    except ValueError:
-        # Fall back to the known feasible warm start for this demonstration.
-        result = builder.extract_solution(warm)
+    result = solver.run()
 
     print(f"QUBO variables : {len(names)}")
     print(f"QUBO shape     : {Q.shape}")
