@@ -1,0 +1,53 @@
+% Physical testbed sketch rendered with the fiziko MetaPost library
+% (https://github.com/jemmybutton/fiziko). Build with lualatex:
+%   lualatex fig_testbed.tex
+\documentclass[border=6pt]{standalone}
+\usepackage{luamplib}
+\everymplib{verbatimtex \leavevmode etex; input fiziko.mp; beginfig(1);}
+\everyendmplib{endfig;}
+\begin{document}
+\begin{mplibcode}
+u := 0.9cm;
+pen bodypen; bodypen := pencircle scaled 0.9;
+
+% ground with light hatching
+draw (-0.5u, 0) -- (10.5u, 0) withpen pencircle scaled 1.2;
+for x = 0 step 0.5u until 10u:
+  draw (x, 0) -- (x - 0.25u, -0.22u) withpen pencircle scaled 0.4;
+endfor
+
+% rover body macro (fiziko wheels, plain body)
+def body(expr x, y) =
+  draw (x - 0.8u, y + 0.55u) -- (x + 0.8u, y + 0.55u)
+    -- (x + 0.8u, y + 1.3u) -- (x - 0.8u, y + 1.3u) -- cycle withpen bodypen;
+  draw (x + 0.4u, y + 1.3u) -- (x + 0.4u, y + 1.9u) withpen bodypen;
+  fill fullcircle scaled 0.18u shifted (x + 0.4u, y + 1.95u);
+enddef;
+
+body(1.2u, 0); draw wheel(0.55u, 0) shifted (1.2u - 0.45u, 0.28u);
+  draw wheel(0.55u, 0) shifted (1.2u + 0.45u, 0.28u);
+  label(btex R1 etex, (1.2u, 0.95u));
+body(4.0u, 0); draw wheel(0.55u, 0) shifted (4.0u - 0.45u, 0.28u);
+  draw wheel(0.55u, 0) shifted (4.0u + 0.45u, 0.28u);
+  label(btex R2 etex, (4.0u, 0.95u));
+body(6.8u, 0); draw wheel(0.55u, 0) shifted (6.8u - 0.45u, 0.28u);
+  draw wheel(0.55u, 0) shifted (6.8u + 0.45u, 0.28u);
+  label(btex R3 etex, (6.8u, 0.95u));
+body(9.4u, 0); draw wheel(0.55u, 0) shifted (9.4u - 0.45u, 0.28u);
+  draw wheel(0.55u, 0) shifted (9.4u + 0.45u, 0.28u);
+  label(btex R4 etex, (9.4u, 0.95u));
+
+% communication ranges (dashed circles)
+for x = 1.2u, 4.0u, 6.8u, 9.4u:
+  draw fullcircle scaled 3.4u shifted (x, 0.9u) dashed evenly;
+endfor
+
+% radio links as fiziko springs; the last one is degraded
+draw spring((1.2u, 2.6u), (4.0u, 2.6u), 6);
+draw spring((4.0u, 2.6u), (6.8u, 2.6u), 6);
+draw spring((6.8u, 2.6u), (9.4u, 2.6u), 6) dashed withdots;
+label.top(btex ESP-NOW etex, (2.6u, 2.9u));
+label.top(btex ESP-NOW etex, (5.4u, 2.9u));
+label.top(btex degraded link etex, (8.1u, 2.9u));
+\end{mplibcode}
+\end{document}
