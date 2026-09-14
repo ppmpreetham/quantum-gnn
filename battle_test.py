@@ -748,6 +748,8 @@ def test_sa_quality_report() -> None:
     for label, kw in [
         ("fast  (restarts=5,  cool=0.90)", dict(restarts=5, cooling_rate=0.90)),
         ("slow  (restarts=20, cool=0.98)", dict(restarts=20, cooling_rate=0.98)),
+        ("pair-moves (p=0.3)", dict(restarts=20, cooling_rate=0.98,
+                                    pair_probability=0.3)),
     ]:
         gaps = []
         for i, (b, e_opt, warm_edges) in enumerate(instances):
@@ -914,10 +916,14 @@ def test_gnn() -> None:
     gnn_rates, rand_rates = [], []
     for seed in range(8):
         gnn_rates.append(
-            RoverSimulation(steps=20, seed=100 + seed, faults=[]).run(verbose=False)["success_rate"])
+            RoverSimulation(steps=20, seed=100 + seed, faults=[],
+                            n_rovers=10, comm_range=6.0, tasks_per_cycle=3,
+                            reliability_drift=0.02).run(verbose=False)["success_rate"])
         rand_rates.append(
-            RoverSimulation(steps=20, seed=100 + seed,
-                            random_assignment=True, faults=[]).run(verbose=False)["success_rate"])
+            RoverSimulation(steps=20, seed=100 + seed, faults=[],
+                            n_rovers=10, comm_range=6.0, tasks_per_cycle=3,
+                            random_assignment=True,
+                            reliability_drift=0.02).run(verbose=False)["success_rate"])
     gnn_mean = float(np.mean(gnn_rates))
     rand_mean = float(np.mean(rand_rates))
     margin = gnn_mean - rand_mean
@@ -1228,6 +1234,124 @@ def test_review2_regressions() -> None:
           f"gnn_full measured despite flag: {s['timings_ms']}")
 
 
+# ----------------------------------------------------------------------
+# M. MILP ground truth (strong classical baseline, true H*)
+# ----------------------------------------------------------------------
+
+
+def test_milp_ground_truth() -> None:
+    print("M. MILP ground truth (CBC) vs projected annealing")
+    try:
+        from milp_baseline import solve_milp  # noqa: F401
+    except ImportError:
+        print("  pulp not installed; skipping MILP comparison")
+        return
+    from milp_baseline import solve_milp
+
+    rng = np.random.default_rng(17)
+    gaps, t_proj, t_milp, evals = [], [], [], []
+    trial = 0
+    while len(gaps) < 20 and trial < 300:
+        n = int(rng.integers(4, 10))
+        inst = random_connected_instance(
+            rng, n,
+            with_budget=True, with_required=True, tight=True,
+        )
+        b = EdgeSelectionQUBO(config=QUBOConfig(), **ctor_args(inst))
+        trial += 1
+        if not 4 <= len(b.optional_edges) <= 40:
+            continue
+        t0 = time.time()
+        try:
+            e_star, kept_star = solve_milp(
+                nodes=inst["nodes"], edges=inst["edges"],
+                features=inst["features"],
+                previous_decisions=inst["previous_decisions"],
+                hard_critical_edges=inst["hard_critical_edges"],
+                required_nodes=inst["required_nodes"] or None,
+                root=inst["root"],
+                degree_limits=inst["degree_limits"],
+                global_budget=inst["global_budget"],
+            )
+        except Exception:  # noqa: BLE001
+            continue
+        t_milp.append(time.time() - t0)
+        # MILP objective == soft energy (same linearization); verify
+        check(f"M.obj-eq t{trial}",
+              abs(e_star - b.soft_energy(kept_star)) < 1e-6,
+              f"MILP objective {e_star} != soft energy {b.soft_energy(kept_star)}")
+        t0 = time.time()
+        ann = ProjectedEdgeAnnealing(b, initial_edge_sets=[inst["warm_edges"]],
+                                     seed=trial)
+        res = ann.run()
+        t_proj.append(time.time() - t0)
+        evals.append(ann.energy_evals)
+        gaps.append(norm_gap(res.energy, e_star))
+    g = np.array(gaps)
+    print(f"  true optimality gap vs MILP: exact={np.mean(g < 1e-9)*100:.0f}% "
+          f"mean={g.mean():.5f} p90={np.percentile(g, 90):.5f} "
+          f"max={g.max():.5f}")
+    print(f"  time: projected {np.mean(t_proj)*1e3:.0f} ms, "
+          f"MILP {np.mean(t_milp)*1e3:.0f} ms; "
+          f"annealer energy evals mean {np.mean(evals):.0f}")
+    check("M.exact-rate", np.mean(g < 1e-9) >= 0.8,
+          f"projected annealer exact rate vs MILP {np.mean(g < 1e-9)*100:.0f}%")
+
+
+# ----------------------------------------------------------------------
+# N. Sensitivity diagnostics (weights, penalties, annealer params)
+# ----------------------------------------------------------------------
+
+
+def test_sensitivity() -> None:
+    print("N. Sensitivity diagnostics")
+    rng = np.random.default_rng(23)
+    base_instances = []
+    trial = 0
+    while len(base_instances) < 15 and trial < 300:
+        n = int(rng.integers(4, 7))
+        inst = random_connected_instance(rng, n, tight=True)
+        b = EdgeSelectionQUBO(config=QUBOConfig(), **ctor_args(inst))
+        trial += 1
+        if 4 <= len(b.optional_edges) <= 16:
+            base_instances.append(inst)
+
+    def exact_rate(config_fn) -> float:
+        hits = 0
+        for inst in base_instances:
+            b = EdgeSelectionQUBO(config=config_fn(), **ctor_args(inst))
+            e_opt = exact_edge_enumeration(b)  # same-config ground truth
+            res = ProjectedEdgeAnnealing(
+                b, initial_edge_sets=[inst["warm_edges"]], restarts=2,
+                seed=7, cooling_rate=0.995, steps_per_temperature=2).run()
+            if res.energy < e_opt + 1e-9:
+                hits += 1
+        return hits / len(base_instances)
+
+    r_base = exact_rate(QUBOConfig)
+    print(f"  baseline exact rate (fixed settings): {r_base:.0%}")
+    for label, cfg in [
+        ("weights x1.5 trust", lambda: QUBOConfig(
+            w_trust=0.375, w_link=0.125, w_battery=0.10, w_proximity=0.10,
+            w_freshness=0.15, w_task=0.15)),
+        ("weights uniform", lambda: QUBOConfig(
+            w_trust=1/6, w_link=1/6, w_battery=1/6, w_proximity=1/6,
+            w_freshness=1/6, w_task=1/6)),
+        ("penalties 20/100", lambda: QUBOConfig(
+            degree_penalty=20.0, budget_penalty=20.0,
+            flow_penalty=100.0, flow_capacity_penalty=100.0)),
+        ("penalties 500/2000", lambda: QUBOConfig(
+            degree_penalty=500.0, budget_penalty=500.0,
+            flow_penalty=2000.0, flow_capacity_penalty=2000.0)),
+        ("edge_penalty 0.3", lambda: QUBOConfig(edge_penalty=0.3)),
+        ("stability 0.6", lambda: QUBOConfig(stability_penalty=0.6)),
+    ]:
+        r = exact_rate(cfg)
+        print(f"  {label:22s}: exact {r:.0%}")
+        check(f"N.{label}", r >= 0.7,
+              f"solver fragile to {label}: exact {r:.0%}")
+
+
 if __name__ == "__main__":
     test_invariants()
     test_brute_force()
@@ -1241,6 +1365,8 @@ if __name__ == "__main__":
     test_simulation_harness()
     test_review2_regressions()
     test_benchmark_gap()
+    test_milp_ground_truth()
+    test_sensitivity()
     print(f"\n==== {PASS} passed, {FAIL} failed ====")
     if FAILURES:
         print("Failures:")

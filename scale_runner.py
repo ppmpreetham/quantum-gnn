@@ -89,7 +89,7 @@ def main() -> None:
     gnn = TrustGNN()
     print(f"{'n':>4s} {'edges':>6s} {'vars':>6s} {'Q MB':>7s} {'build s':>8s} "
           f"{'solve s':>8s} {'kept':>5s} {'E_proj':>9s} {'E_greedy':>9s} "
-          f"{'gnn full ms':>11s} {'gnn pruned ms':>13s}")
+          f"{'E_milp':>9s} {'gnn full ms':>11s} {'gnn pruned ms':>13s}")
     for n in (10, 20, 30, 50):
         pos, edges, features, previous, degree_limits, budget = \
             make_sparse_instance(rng, n)
@@ -140,6 +140,21 @@ def main() -> None:
         greedy, greedy_ok = repair_to_feasible(builder, set(ranked[:k]), features)
         e_greedy = builder.soft_energy(greedy) if greedy_ok else float("nan")
 
+        # exact MILP ground truth (CBC) where the full constrained problem
+        # is enforced; this is the strong classical baseline
+        e_milp = float("nan")
+        if conn:
+            try:
+                from milp_baseline import solve_milp
+                e_milp, _ = solve_milp(
+                    nodes=list(range(n)), edges=edges, features=features,
+                    previous_decisions=previous,
+                    required_nodes=list(range(n)), root=0,
+                    degree_limits=degree_limits, global_budget=budget,
+                    time_limit=120)
+            except Exception:  # noqa: BLE001
+                pass
+
         # GNN latency: full vs pruned graph
         node_features = {
             i: NodeFeatures(trust=float(rng.random()), battery=float(rng.random()),
@@ -158,7 +173,7 @@ def main() -> None:
         q_mb = builder.Q.nbytes / 1e6
         print(f"{n:>4d} {len(edges):>6d} {len(builder.variables):>6d} "
               f"{q_mb:7.2f} {t_build:8.2f} {t_solve:8.2f} {k:>5d} "
-              f"{e_proj:9.3f} {e_greedy:9.3f} "
+              f"{e_proj:9.3f} {e_greedy:9.3f} {e_milp:9.3f} "
               f"{t_full:11.2f} {t_pruned:13.2f}")
 
 

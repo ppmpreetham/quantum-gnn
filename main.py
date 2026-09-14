@@ -926,6 +926,7 @@ class ProjectedEdgeAnnealing:
         self.swap_probability = swap_probability
         self.restarts = restarts
         self.rng = np.random.default_rng(seed)
+        self.energy_evals = 0
         self.initial_edge_sets = [
             {canonical_edge(e) for e in edges} for edges in (initial_edge_sets or [])
         ]
@@ -933,6 +934,7 @@ class ProjectedEdgeAnnealing:
     def _project(self, selected: set[Edge]) -> Tuple[np.ndarray, float]:
         # build_feasible_solution validates feasibility; for feasible states
         # the QUBO energy equals the soft objective, which is O(m).
+        self.energy_evals += 1
         z = self.builder.build_feasible_solution(selected)
         return z, self.builder.soft_energy(selected)
 
@@ -1134,6 +1136,7 @@ class SimulatedAnnealing:
         restarts: int = 20,
         seed: int = 42,
         initial_states: Optional[Sequence[np.ndarray]] = None,
+        pair_probability: float = 0.0,
     ) -> None:
         Q = np.asarray(Q, dtype=float)
         if Q.ndim != 2 or Q.shape[0] != Q.shape[1]:
@@ -1146,6 +1149,8 @@ class SimulatedAnnealing:
             raise ValueError("final_temperature must be positive")
         if sweeps_per_temperature <= 0 or restarts <= 0:
             raise ValueError("sweeps_per_temperature and restarts must be positive")
+        if not 0.0 <= pair_probability <= 1.0:
+            raise ValueError("pair_probability must be in [0,1]")
 
         self.Q = Q
         self.constant = float(constant)
@@ -1156,6 +1161,7 @@ class SimulatedAnnealing:
         self.restarts = restarts
         self.rng = np.random.default_rng(seed)
         self.initial_states = list(initial_states or [])
+        self.pair_probability = pair_probability
 
     def energy(self, z: np.ndarray) -> float:
         return float(z @ self.Q @ z + self.constant)
@@ -1183,6 +1189,30 @@ class SimulatedAnnealing:
 
             while temperature > self.final_temperature:
                 for _ in range(self.sweeps * n):
+                    if self.pair_probability > 0.0 and n > 1 \
+                            and self.rng.random() < self.pair_probability:
+                        # two-bit move: tests whether the penalty barrier is
+                        # a neighborhood artifact or a landscape property
+                        i = int(self.rng.integers(n))
+                        j = int(self.rng.integers(n - 1))
+                        if j >= i:
+                            j += 1
+                        di = 1.0 - 2.0 * z[i]
+                        dj = 1.0 - 2.0 * z[j]
+                        d_energy = (
+                            2.0 * di * qz[i] + diag[i]
+                            + 2.0 * dj * qz[j] + diag[j]
+                            + 2.0 * di * dj * self.Q[i, j]
+                        )
+                        if d_energy <= 0.0 or self.rng.random() < exp(-d_energy / temperature):
+                            z[i] = 1.0 - z[i]
+                            z[j] = 1.0 - z[j]
+                            current_energy += d_energy
+                            qz += di * self.Q[:, i] + dj * self.Q[:, j]
+                            if current_energy < local_best_energy:
+                                local_best_energy = current_energy
+                                local_best_z = z.copy()
+                        continue
                     i = int(self.rng.integers(n))
                     old = z[i]
                     delta_z = 1.0 - 2.0 * old

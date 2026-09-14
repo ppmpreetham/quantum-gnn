@@ -14,8 +14,9 @@
 \usepackage{caption}
 \captionsetup{font=small,labelfont=bf}
 
-\title{Quantum-Inspired Edge Pruning and Trust-Aware Graph Neural Inference\\
-for Task Allocation in Dynamic Rover Networks}
+\title{Constrained Edge Pruning and Trust-Aware GNN Inference\\
+for Task Allocation in Dynamic Rover Networks:\\
+a QUBO Formulation with a Solver-Level Audit}
 \author{Anonymous Authors\\
 \texttt{quantum-gnn} project}
 \date{\today}
@@ -27,83 +28,99 @@ for Task Allocation in Dynamic Rover Networks}
 
 \begin{abstract}
 Mobile rover swarms communicate over wireless links whose quality changes
-constantly, so the graph describing the swarm is dynamic. Running graph neural
-network (GNN) inference on the full graph wastes fog-tier compute and lets
-degraded links corrupt decisions. We present a pipeline in which a constrained
-quadratic unconstrained binary optimization (QUBO) model prunes the dynamic
-graph each cycle, and a trust-aware message-passing GNN assigns tasks on the
-pruned graph, with trust updated online from observed outcomes. We prove the
-QUBO encoding correct against an independent re-derivation and exhaustive
-enumeration, and we identify and quantify a \emph{penalty-barrier} failure of
-bit-level annealers on penalty-encoded QUBOs: a local simulated annealer and
-the \code{dwave-neal} sampler reach the exact optimum in only 52\% and 60\% of
-instances respectively, while a feasibility-projected annealer introduced here
-solves 100\% of exactly verifiable instances. On fleets of 10 to 50 rovers the
-projected annealer keeps strictly better edge sets than a repaired greedy
-baseline at equal budget. Trust-aware assignment improves task success rate by
-7.0 percentage points over random assignment, and a cloud-trained readout
-further improves over fixed weights on held-out scenarios. We also report
-honest negative results: at small fleet sizes the QUBO pruner costs orders of
-magnitude more wall-clock time than the GNN inference it protects, so the
-architecture only pays off at scale or under a cloud/fog split.
+constantly, so the graph describing the swarm is dynamic. We study a pipeline
+in which a constrained quadratic unconstrained binary optimization (QUBO)
+model prunes the dynamic graph each cycle and a trust-aware message-passing
+GNN assigns tasks on the pruned graph, with trust updated online from
+observed outcomes. Rather than only proposing the formulation, we audit it.
+First, we verify the QUBO encoding against an independent re-derivation and
+exhaustive enumeration. Second, we show that penalty-encoded constrained
+QUBOs are difficult for annealing-style samplers: local bit-flip simulated
+annealing, a two-bit-move variant, and the \code{dwave-neal} sampler reach
+the exact optimum in only 52 to 60\% of verifiable instances, while a
+feasibility-projected annealer that moves over valid edge sets solves 100\%
+of them, and 95\% against exact MILP optima on larger instances (mean true
+optimality gap below $10^{-3}$). Third, we show the uncomfortable
+counterpoint: the same problem solved directly as a mixed-integer program by
+CBC is exact and roughly 100 times faster than our annealer, so on classical
+hardware the QUBO's role is as a hardware-target encoding, not as the
+recommended solver. End-to-end, trust-aware assignment improves mission
+success over random assignment by 13.8 percentage points and over a
+trust-only baseline by 8.1 points (paired bootstrap 95\% CI $[+4.2, +11.7]$,
+permutation $p=0.016$), with mission success now causally dependent on the
+pruned topology. We report negative results with equal prominence: the QUBO
+pruner does not beat a threshold pruner on raw success at ten-rover scale,
+message passing adds a statistically insignificant margin over a no-graph
+readout, and a cloud-trained readout does not improve over fixed weights.
 \end{abstract}
 
 \section{Introduction}
 
-Teams of small rovers are increasingly used for exploration, inspection, and
-logistics in areas without infrastructure. Such teams coordinate over
-low-power radios (in our case ESP-NOW between ESP32-class nodes), which makes
-the communication graph highly dynamic: links appear, degrade, and vanish as
-rovers move, and nodes vary in reliability as batteries drain and sensors
-fault. A natural way to allocate tasks in such a system is to run graph
-neural network inference over the swarm graph, but two problems arise. First,
-feeding the full, messy graph into the model wastes the limited compute of a
-fog-tier device and lets stale or hostile edges distort the result. Second,
-greedy or threshold-based pruning ignores global constraints such as degree
-limits, processing budgets, and the requirement that mission-critical nodes
-stay connected.
+Teams of small rovers coordinate over low-power radios (in our case ESP-NOW
+between ESP32-class nodes), which makes the communication graph highly
+dynamic: links appear, degrade, and vanish as rovers move, and nodes vary in
+reliability as batteries drain and sensors fault. Allocating tasks over such
+a graph raises two problems. First, running graph neural network (GNN)
+inference on the full, messy graph wastes fog-tier compute and lets degraded
+edges distort decisions. Second, naive pruning cannot respect global
+constraints such as degree limits, processing budgets, and the requirement
+that mission-critical nodes stay connected.
 
 This paper studies a pipeline that prunes the dynamic graph with a
 constrained QUBO model and then performs trust-aware GNN inference on the
-surviving subgraph. The QUBO is designed for quantum-inspired or quantum
-annealing backends, but our evaluation shows that the choice of classical
-solver matters more than the choice of encoding. Concretely, we contribute:
+surviving subgraph. Our intent from the start was to make the system
+quantum-ready: the QUBO form is what quantum and quantum-inspired annealers
+consume. What the work actually demonstrates, however, is broader and more
+useful: a careful account of when such a formulation is solved well, when it
+is not, and what each component of the pipeline contributes. Concretely, we
+contribute:
 
 \begin{itemize}
 \item A constrained QUBO formulation for dynamic graph sparsification with
-utility, stability, degree, budget, and connectivity terms, where
-connectivity is enforced exactly by a single-commodity flow encoding inside
-the QUBO rather than by a heuristic post-check
-(Section~\ref{sec:qubo}).
-\item An analysis of the penalty-barrier problem: single-bit-flip annealers
-cannot cross the penalty walls of such encodings, measured as a 52 to 60\%
-exact-solve rate for bit-level simulated annealing and \code{dwave-neal}
-against 100\% for a feasibility-projected annealer that moves in the space of
-valid edge sets (Section~\ref{sec:solvers}).
-\item A trust-aware message-passing GNN with an online EWMA trust model,
-aging-based rehabilitation, and a cloud-trained logistic readout
+utility, stability, degree, budget, and connectivity terms, connectivity
+enforced exactly by a single-commodity flow encoding inside the QUBO
+(Section~\ref{sec:qubo}), with the implementation validated against an
+independent re-derivation and exhaustive enumeration.
+\item A solver-level audit of that encoding (Section~\ref{sec:solvers}):
+bit-level annealers (including \code{dwave-neal}) solve only about half of
+exactly verifiable instances due to a penalty-barrier effect we quantify,
+while a feasibility-projected annealer solves all of them, and an exact MILP
+baseline (CBC) solves the problem directly, faster than any annealer.
+\item A trust-aware assignment layer with an online EWMA trust model, aging
+rehabilitation, and explicit ablations isolating what the GNN contributes
+over trust-only and no-graph baselines, with paired statistics
 (Section~\ref{sec:gnn}).
-\item An open, reproducible evaluation harness covering solver optimality,
-scaling, pruning baselines, latency, trust quality, and fault recovery, with
-honest negative results about when the QUBO does not pay off
-(Section~\ref{sec:eval}).
+\item An end-to-end evaluation in which mission success depends causally on
+the pruned topology, including pruning baselines, latency, staleness under
+cloud-amortized solving, fault recovery, sensitivity analysis, and negative
+results (Section~\ref{sec:eval}).
 \end{itemize}
 
 \section{Related Work}
 
-Graph neural networks were popularized by Kipf and Welling~\cite{kipf2017} and
-extended to inductive settings by Hamilton et al.~\cite{graphsage2017}; we use
-a lightweight trust-weighted message-passing variant suitable for micro fog
-devices. QUBO models and their Ising equivalents are surveyed by
-Glover et al.~\cite{glover2019} and Lucas~\cite{lucas2014}; simulated
-annealing dates to Kirkpatrick et al.~\cite{kirkpatrick1983} and is available
-in production form through D-Wave's Ocean SDK~\cite{ocean}. The mist, fog, and
-cloud split follows Bonomi et al.~\cite{bonomi2012}. Trust models for multi-robot
-systems are surveyed in~\cite{trustsurvey}; our EWMA-with-aging update is a
-deliberately simple instance chosen for per-cycle cost. To our knowledge, the
-combination of constrained QUBO pruning with online trust-aware GNN inference
-for rover task allocation, together with a solver-level audit of the QUBO
-encoding, has not been reported before.
+Graph neural networks were popularized by Kipf and Welling~\cite{kipf2017}
+and extended to inductive settings by Hamilton et al.~\cite{graphsage2017};
+we use a lightweight trust-weighted message-passing variant suited to fog
+devices. QUBO and Ising formulations are surveyed by Glover et
+al.~\cite{glover2019} and Lucas~\cite{lucas2014}; simulated annealing dates
+to Kirkpatrick et al.~\cite{kirkpatrick1983} and is available in production
+form through D-Wave's Ocean SDK~\cite{ocean}. Our exact classical baseline
+uses the CBC branch-and-cut solver from COIN-OR~\cite{cbc}, and our MILP
+encoding exploits the integrality of single-commodity flow relaxations, a
+standard result in network optimization~\cite{flowbook}. Multi-robot task
+allocation is surveyed by Korsah et al.~\cite{mrtasurvey}; trust models for
+multi-agent systems are surveyed in~\cite{trustsurvey}. When trust estimation
+is isolated from the graph, the assignment problem reduces to a bandit
+problem~\cite{auer2002}; we include the corresponding trust-only baseline
+explicitly, since it is the strongest simple competitor. Graph
+sparsification has a large classical literature~\cite{sparsification}; our
+setting differs in requiring online, constraint-carrying decisions on a
+dynamic graph. The mist/fog/cloud split follows Bonomi et
+al.~\cite{bonomi2012}. To our knowledge, the combination of constrained QUBO
+pruning with online trust-aware GNN inference for rover task allocation, and
+in particular the solver-level comparison of penalty-encoded QUBO,
+feasibility-projected annealing, and direct MILP for this problem, has not
+been reported before.
 
 \section{System Model}
 \label{sec:model}
@@ -111,24 +128,38 @@ encoding, has not been reported before.
 The deployment follows a three-tier architecture (Fig.~\ref{fig:arch}).
 Rovers (mist tier, ESP32-class) sense their state and exchange telemetry over
 ESP-NOW. A gateway forwards telemetry to a Raspberry Pi (fog tier), which
-maintains the dynamic graph, prunes it, and runs GNN inference. A laptop or
-server (cloud tier) retrains the GNN readout and can run heavier QUBO solvers
-offline.
+maintains the dynamic graph, prunes it, and runs assignment. A laptop or
+server (cloud tier) retrains the readout and can amortize expensive solves.
 
 At cycle $t$ the swarm is an undirected graph $G_t=(V,E_t)$. Each edge
 $e=(i,j)$ carries normalized features
 $(T_e,L_e,B_e,P_e,A_e,C_e,c_e)\in[0,1]^6\times\mathbb{N}$:
-trust $T_e=\min(T_i^{t-1},T_j^{t-1})$ from the trust model of the previous
-cycle, link quality $L_e$, battery $B_e=\min(B_i,B_j)$, proximity $P_e$,
-freshness $A_e=\exp(-\Delta t_e/\tau)$ from the last successful observation of
-the link, task criticality $C_e$ derived from the tasks running at the
-endpoints, and quantized processing cost $c_e=\max(1,\lfloor 10\,\bar{c}_e
-\rceil)$. Node features are trust $T_i$, battery $B_i$, load $\ell_i$, and
+trust $T_e=\min(T_i^{t-1},T_j^{t-1})$ from the previous cycle's trust model,
+link quality $L_e$, battery $B_e=\min(B_i,B_j)$, proximity $P_e$,
+freshness $A_e=\exp(-\Delta t_e/\tau)$ from the last successful observation
+of the link, task criticality $C_e$ from the tasks running at the endpoints,
+and a processing cost that models transmission and queueing time,
+$c_e=\max(1,\lfloor 10\,\bar{c}_e\rceil)$ with
+$\bar{c}_e = 0.1 + 0.5(1-P_e) + 0.15(\ell_i+\ell_j)$.
+Node features are trust $T_i$, battery $B_i$, load $\ell_i$, and
 capability $q_i$.
 
+Mission success is causal through the pruned graph. An assigned rover
+\emph{executes} a task successfully with probability equal to its hidden
+reliability (gated by battery); execution outcomes drive trust updates. The
+task result must then be \emph{delivered} to the root rover over the kept
+subgraph, succeeding with probability equal to the weakest link quality on
+the node's widest path to the root. Mission success is the conjunction. This
+matters: in an earlier version of our simulator, success depended only on
+node reliability, and the entire pruning layer was causally disconnected from
+the metric it was supposed to improve. We consider fixing that coupling a
+prerequisite for any end-to-end claim in this paper.
+
 Each cycle executes the pipeline of Fig.~\ref{fig:pipeline}: build the graph,
-prune edges subject to constraints, score nodes with the GNN, assign tasks
-greedily under per-node capacity, observe outcomes, and update trust.
+prune edges subject to constraints, score nodes, assign tasks greedily under
+per-node capacity and resource gates, observe outcomes, and update trust. A
+fixed mission-critical node set (chosen once per scenario, not redefined per
+cycle) anchors the connectivity constraint.
 
 \begin{figure}[t]
 \centering
@@ -211,83 +242,103 @@ H(z) =& \sum_{e\in O}(-U_e+\lambda)\,x_e
 where $U_e$ is the weighted edge utility with weights summing to one,
 $\lambda$ is a sparsity penalty, $\eta$ a topology-stability penalty,
 $b_r=-m$, $b_v=1$ for $v\in R\setminus\{r\}$ and $0$ otherwise, and
-$x_e:= 1$ for $e\in H$. The flow terms enforce exactly that the
-required set remains connected in the selected subgraph: the root sends one
-unit of flow to every other required node, and flow may traverse an edge only
-if the edge is selected.
+$x_e:=1$ for $e\in H$. The flow terms enforce exactly that the required set
+remains connected in the selected subgraph.
 
-The penalties satisfy $\rho_d=\rho_C=100$ and $\rho_F=\rho_{FC}=500$ against a
-soft objective of magnitude at most about $1.2$ per edge. Since each unit of
+The penalties satisfy $\rho_d=\rho_C=100$ and $\rho_F=\rho_{FC}=500$ against
+a soft objective of magnitude at most about $1.2$ per edge. Each unit of
 constraint violation costs at least $100$ but unlocks at most one edge worth
 at most $1.2$, and flow violations are quadratically penalized against a
-linear gain, no violation can ever be profitable at any problem size. We
-verified this exhaustively: over 38 randomly generated instances the exact
-bit-level optimum of Eq.~\eqref{eq:qubo} never contains a violated constraint.
+linear gain, so no violation can be profitable at any problem size. We
+confirmed this exhaustively: over 38 randomly generated instances, the exact
+bit-level optimum of Eq.~\eqref{eq:qubo} never contains a violated
+constraint.
 
-The implementation was additionally verified against an independent
-re-derivation of Eq.~\eqref{eq:qubo}: on 40 instances with 8 random states
-each, the matrix energy $z^{\top}Qz+\mathrm{const}$ agrees with the
-independent evaluation to within $2.3\times10^{-10}$.
+We want to be precise about the strength of our verification claim, because
+``proven correct'' is easy to overstate. The encoding is derived from the
+specification above; the implementation is then validated empirically against
+an \emph{independent} re-derivation of Eq.~\eqref{eq:qubo}: on 40 instances
+with 8 random states each, the matrix energy $z^{\top}Qz+\mathrm{const}$
+agrees with the independent evaluation to within $2.3\times10^{-10}$. This is
+strong empirical validation of the implementation, not a formal proof, and we
+report it as such.
 
 \section{Solver Analysis: The Penalty-Barrier Problem}
 \label{sec:solvers}
 
-A QUBO of the form of Eq.~\eqref{eq:qubo} is meant to be sampled by an
-annealer. We found that this fails in a specific, quantifiable way. From any
-feasible state, every single-bit flip either breaks a constraint (penalty at
-least $100$) or changes the soft objective by at most about $1.2$. The
-probability of accepting a constraint-breaking move at temperature $T$ is
-$\exp(-100/T)$, which is effectively zero at temperatures that are still
-useful for the soft landscape. Bit-level annealers therefore cannot move
-between feasible regions: they either freeze inside the basin of the initial
-feasible state or wander through infeasible space and return garbage.
-Empirically, random restarts of bit-level simulated annealing returned an
-infeasible state in 19 of 25 test instances.
+A QUBO like Eq.~\eqref{eq:qubo} is meant to be sampled by an annealer. We
+found that this fails in a specific, quantifiable way, and we are careful to
+scope the claim to what we measured. From any feasible state, every
+single-bit flip either breaks a constraint (penalty at least $100$) or
+changes the soft objective by at most about $1.2$. At temperatures useful for
+the soft landscape, the acceptance probability of a constraint-breaking move
+is effectively zero. We therefore expected single-bit simulated annealing to
+be unable to move between feasible regions, and it cannot: random restarts
+returned infeasible states in 19 of 25 test instances. The natural objection
+is that this is an artifact of the move set, so we also tested a two-bit-move
+variant and a production sampler (\code{dwave-neal}, 100 reads). Both improve
+matters only marginally (Fig.~\ref{fig:solvers}). Our claim is therefore
+narrow: \emph{on this penalty-encoded landscape, local QUBO samplers of the
+annealing family perform poorly}, not that all QUBO methods must fail.
 
 Our solver, \emph{projected edge annealing}, moves in the space of feasible
 edge subsets instead of the space of bit strings. A move toggles one optional
-edge, or swaps two edges, and the candidate is projected back to feasibility
-by an exact repair procedure that recomputes slacks and a spanning-tree flow.
-Moves that cannot be projected are rejected. The objective evaluated is still
-exactly $H(z)$, restricted to the feasible manifold where the penalty terms
-vanish; the QUBO remains the specification of the problem, and the Q matrix
-is still exported for hardware backends. After annealing, a deterministic
-polish alternates single-toggle and pairwise-swap passes to a local fixpoint.
-Random restarts are seeded with degree-cap-aware random spanning trees, since
-greedy edge-by-edge growth can never cross the infeasible prefix states that
-connectivity constraints create.
+edge or swaps two edges, and the candidate is projected back to feasibility
+by an exact repair procedure that recomputes slacks and a spanning-tree flow;
+unprojectable moves are rejected. The objective is still exactly $H(z)$,
+restricted to the feasible manifold where the penalty terms vanish; the QUBO
+remains the specification, and the Q matrix is still exported for hardware
+backends. A deterministic polish alternates single-toggle and pairwise-swap
+passes to a local fixpoint, and random restarts are seeded with
+degree-cap-aware random spanning trees, because greedy edge-by-edge growth
+can never cross the infeasible prefix states that connectivity constraints
+create. Each solve uses about $2.4\times10^4$ energy evaluations and about
+2.1\,s on our benchmark instances.
 
 \begin{figure}[t]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-  ybar, bar width=16pt,
-  width=0.75\columnwidth, height=5.2cm,
+  ybar, bar width=13pt,
+  width=0.8\columnwidth, height=5.2cm,
   ylabel={exact-solve rate (\%)},
   ymin=0, ymax=110,
-  symbolic x coords={bit-SA (fast), bit-SA (slow), dwave-neal, projected},
+  symbolic x coords={bit-SA (fast), bit-SA (slow), bit-SA (2-bit), dwave-neal, projected},
   xtick=data, x tick label style={font=\small, align=center},
   nodes near coords, nodes near coords style={font=\small},
   every axis plot/.append style={fill=blue!35, draw=blue!60},
 ]
-\addplot coordinates {(bit-SA (fast),52) (bit-SA (slow),56) (dwave-neal,60) (projected,100)};
+\addplot coordinates {(bit-SA (fast),52) (bit-SA (slow),56) (bit-SA (2-bit),60) (dwave-neal,60) (projected,100)};
 \end{axis}
 \end{tikzpicture}
 \caption{Exact-solve rate on 25 instances with exhaustively enumerated ground
-truth. Bit-level simulated annealing and \code{dwave-neal} sample the raw Q
-matrix; projected annealing moves over feasible edge sets.}
+truth. The 2-bit variant and \code{dwave-neal} sample the same Q matrix with
+richer effort and still miss two in five instances.}
 \label{fig:solvers}
 \end{figure}
 
-Fig.~\ref{fig:solvers} shows the result on 25 instances whose optimum is
-known exactly. Local bit-flip annealing reaches the optimum in 52 to 56\% of
-instances (mean normalized gap $0.15$), and \code{dwave-neal} with 100 reads
-reaches it in 60\% (mean gap $0.083$). Projected annealing reaches the exact
-optimum in 100\% of the instances. On 20 larger instances (up to 817 binary
-variables) where enumeration is impossible, the projected annealer's
-normalized gap against the best-known solution over four seeds is 6.9\% on
-average (90th percentile 17\%), using
-$\mathrm{gap}=(H_{\mathrm{SA}}-H^{*})/\max(1,|H^{*}|)$.
+\subsection{The strong classical baseline: direct MILP}
+
+The fairest question to ask of a QUBO pipeline is why not solve the original
+constrained problem directly. The soft objective of Eq.~\eqref{eq:qubo} is
+linear in $x$, the stability term is linear for binary variables, and the
+single-commodity flow relaxation is integral, so the problem is a
+mixed-integer linear program. We solve it exactly with CBC~\cite{cbc}. On 20
+instances with up to 40 optional edges, the projected annealer reaches the
+MILP optimum in 95\% of cases (mean normalized gap $7\times10^{-5}$, worst
+$1.4\times10^{-3}$), using the normalized gap
+$(H_{\mathrm{SA}}-H^{*})/\max(1,|H^{*}|)$. On 25 small instances it remains
+100\% exact against exhaustive enumeration, and on 20 larger instances (up to
+817 binary variables) its gap against the best of four annealer seeds is
+6.9\% on average.
+
+The counterpoint is just as important: CBC solves these instances in about
+15\,ms, against about 2.1\,s for the annealer. On classical hardware, direct
+MILP is both exact and roughly 100 times faster. What remains for the QUBO
+encoding is precisely its original purpose: it is the input format of quantum
+and quantum-inspired annealing hardware, and the projected annealer is the
+strong classical stand-in until such hardware is evaluated. We state this
+plainly rather than overselling the formulation.
 
 \section{Trust-Aware GNN Inference}
 \label{sec:gnn}
@@ -300,23 +351,25 @@ h_i' = \mathrm{ReLU}\big(W_s h_i + W_n m_i + b\big),\qquad
 s_i = \sigma\big(w^{\top} h_i^{(2)} + \beta\big),
 \]
 where $a_{ij}=T_{ij}L_{ij}$ weights messages by link trust and quality. The
-self-weight (0.8) dominates the neighborhood weight (0.2): for task
-allocation, neighbor trust must not wash out per-node differentiation, which
-an equal-weighted aggregation empirically does. Nodes below per-task trust,
-battery, or compute thresholds are gated to score zero, and mission-critical
-tasks scale the output probability by $(0.5+0.5\,T_i)$.
+self-weight (0.8) dominates the neighborhood weight (0.2); nodes below
+per-task trust, battery, or compute thresholds are gated to zero, with a
+deadlock fallback that relaxes the trust gate when it would leave a task
+unassigned. Scores are modulated by $(0.5+0.5\,p_i)$, where $p_i$ is the
+weakest-link quality on node $i$'s path to the root, so the assigner prefers
+strong delivery paths without letting the root absorb every task.
 
 Trust itself is dynamic. After each cycle, an assigned node's trust follows
-an EWMA,
-$T_i \leftarrow \alpha T_i + (1-\alpha)\,\mathrm{obs}_i$, with
-$\mathrm{obs}_i$ combining task outcome and link evidence, while unobserved
-nodes age slowly toward the prior, $T_i \leftarrow T_i + \delta(0.5-T_i)$.
-Aging is what rehabilitates a rover after a single unlucky failure; without
-it we observed permanent blacklisting, and without per-task load feedback we
-observed overload lockout of the trusted nodes. The readout $(w,\beta)$ is
-trained offline (cloud tier) by logistic regression on hidden states and
-observed outcomes collected during operation, which turns the scorer from a
-hand-set heuristic into a trained model.
+an EWMA, $T_i \leftarrow \alpha T_i + (1-\alpha)\,\mathrm{obs}_i$, while
+unobserved nodes age toward the prior,
+$T_i \leftarrow T_i + \delta(0.5-T_i)$. Aging rehabilitates a rover after a
+single unlucky failure; without it we observed permanent blacklisting, and
+without per-task load feedback we observed overload lockout. Hidden
+reliability in the simulator drifts over time and is spatially correlated
+(nearby rovers share conditions), so the trust model must track a moving,
+structured target rather than estimate a stationary Bernoulli mean. The
+readout $(w,\beta)$ can be trained offline by logistic regression on
+collected outcomes; we collect training data with a high exploration rate so
+that a random-policy, selection-bias-free subset exists (Section~\ref{sec:training}).
 
 \begin{figure}[t]
 \centering
@@ -324,7 +377,6 @@ hand-set heuristic into a trained model.
   \includegraphics[width=0.85\columnwidth]{fig_testbed.pdf}%
 }{%
 \begin{tikzpicture}[scale=1.0]
-  % TikZ fallback rendering of the testbed sketch (fiziko version preferred)
   \draw[thick] (-0.5,0) -- (9.5,0);
   \foreach \x/\y/\name/\rng in {0.8/0/R1/1.3, 3.2/0.35/R2/1.3, 5.6/0/R3/1.3, 8.0/0.3/R4/1.3}{
     \draw[fill=gray!15] (\x-0.35,\y+0.18) rectangle (\x+0.35,\y+0.55);
@@ -350,34 +402,151 @@ arcs; the degraded link is a pruning candidate.}
 
 All experiments run on the open harness in the repository
 (\code{battle\_test.py}, \code{simulation.py}, \code{scale\_runner.py};
-459 checks passing). Instances are random connected graphs with uniform
-feature noise; tight variants place degree and budget caps near feasibility.
+486 checks passing) on an AMD Ryzen 7 5800H (16 threads, 8\,GB RAM, Python
+3.14, NumPy with the reference CBLAS). The simulator is a synthetic dynamic
+graph world inspired by rover networking; it is not a wireless channel model,
+and we report it as such.
 
-\subsection{Optimality and scaling}
+\subsection{Pruning baselines and the honest pruner table}
 
-Table~\ref{tab:scaling} reports fleets of 10 to 50 rovers on range-limited
-sparse graphs. The projected annealer keeps strictly better feasible edge
-sets than a greedy top-$K$ baseline repaired to feasibility at the same edge
-budget, and the margin grows with fleet size. Two honest caveats appear in
-the same table: the flow-based connectivity encoding dominates variable count
-and solve time (enabled up to 20 rovers here), and the dense Q matrix scales
-quadratically in variable count, so the formulation targets tens of rovers,
-not hundreds, without a sparse or hierarchical encoding.
+Table~\ref{tab:pruners} compares the QUBO pruner against three baselines over
+identical scenarios (10 rovers, 20 cycles, 10 seeds, drifting reliability).
+Two results deserve emphasis. First, mission success now depends on the
+pruned topology by construction (delivery over the kept graph), so the table
+measures a real causal effect. Second, the QUBO pruner \emph{loses} on raw
+success: $-4.3$ points against the threshold pruner, paired bootstrap 95\% CI
+$[-7.0, -1.5]$, permutation $p=0.028$. The QUBO's edge-local utility optimum
+removes redundancy that bottleneck-path delivery needs; keeping 84 to 100\%
+of edges wins on delivery at this scale. What the QUBO buys is not success
+but guarantees: degree caps, a hard budget, and exact connectivity of the
+mission set, which the baselines cannot promise. Its trust estimates are also
+the best of the table (Spearman 0.260, AUC 0.662). Whether the guarantee is
+worth 4 success points is a deployment decision, and we report it as one.
 
 \begin{table}[t]
 \centering
-\caption{Scaling on range-limited graphs. Connectivity enforced for
-$n\le 20$; greedy is repaired to feasibility (n=10 greedy repair is
-infeasible under connectivity and is omitted).}
-\label{tab:scaling}
-\begin{tabular}{rrrrrrr}
+\caption{Pruner comparison, 10 rovers, 20 cycles, 10 seeds, drifting
+reliability. Kept is the mean fraction of candidate edges retained. Trust
+metrics compare learned trust to hidden ground-truth reliability.}
+\label{tab:pruners}
+\begin{tabular}{lrrrrr}
 \toprule
-$n$ & $|E|$ & vars & $Q$ (MB) & solve (s) & $E_{\mathrm{proj}}$ & $E_{\mathrm{greedy}}$ \\
+pruner & success & solve (ms) & kept & Spearman & AUC \\
 \midrule
-10 & 30 & 427 & 1.5 & 12.6 & $-6.39$ & --- \\
-20 & 63 & 1076 & 9.3 & 41.4 & $-15.05$ & $-11.76$ \\
-30 & 95 & 194 & 0.3 & 15.4 & $-21.12$ & $-16.62$ \\
-50 & 169 & 328 & 0.9 & 94.5 & $-36.71$ & $-24.30$ \\
+full graph & 36.8\% & 0 & 100\% & 0.228 & 0.608 \\
+threshold & 38.2\% & 0 & 84\% & 0.218 & 0.592 \\
+top-$K$ & 38.2\% & 0 & 50\% & 0.205 & 0.624 \\
+QUBO (ours) & 33.8\% & 1216 & 55\% & 0.260 & 0.662 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Assignment ablations with paired statistics}
+\label{sec:ablation}
+
+To isolate what the GNN contributes, we compare four assignment policies on
+identical scenarios: random among eligible rovers, trust-only (highest
+trust, the bandit-style baseline), a no-graph logistic readout on raw node
+features, and the full trust-aware GNN (Table~\ref{tab:ablation}). The GNN
+beats trust-only by 8.1 points with a paired bootstrap CI excluding zero and
+a significant permutation test; it beats random by 13.8 points. The margin of
+the full GNN over the no-graph readout is $+1.7$ points but not significant
+($p=0.74$): at ten-rover density, most of the value is in the trust model and
+the path-aware gating, and message passing adds a small, not yet significant,
+extra. We consider this the honest answer to ``is the GNN necessary'': the
+graph helps, modestly, and the claim at this scale is limited to that.
+
+\begin{table}[t]
+\centering
+\caption{Assignment ablation, 10 rovers, 20 cycles, 8 seeds. Differences are
+paired per seed; CI is a 95\% paired bootstrap interval and $p$ a sign-flip
+permutation test.}
+\label{tab:ablation}
+\begin{tabular}{lr}
+\toprule
+policy & success \\
+\midrule
+random & 26.0\% \\
+trust-only & 31.7\% \\
+no-graph readout & 38.1\% \\
+trust-aware GNN (ours) & 39.8\% \\
+\midrule
+GNN $-$ trust-only & $+8.1$pp, CI $[+4.2,+11.7]$, $p=0.016$ \\
+GNN $-$ no-graph & $+1.7$pp, CI $[-2.1,+6.9]$, $p=0.736$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Staleness and cloud amortization}
+
+A 1.2\,s solve cannot run synchronously on a fog device in a fast-changing
+network, so the architecture amortizes: solve every $k$ cycles (cloud),
+reuse the stale decision (intersected with the live graph) between solves.
+Table~\ref{tab:staleness} shows that reusing a two-cycle-old decision costs
+under one success point while halving solve load; at $k=4$ and above the
+measurement is dominated by seed variance, which we say rather than drawing a
+curve through noise. The guarantee bookkeeping matters here: the simulator
+counts how often each relaxation level is used (full constraints, no budget,
+budget only, unconstrained, stale reuse), so the coverage of the connectivity
+guarantee is measurable rather than asserted.
+
+\begin{table}[t]
+\centering
+\caption{Cloud amortization, 10 rovers, 20 cycles, 6 seeds. Solve time is
+amortized over cycles; the stale decision is intersected with the live graph.}
+\label{tab:staleness}
+\begin{tabular}{rrrr}
+\toprule
+solve interval $k$ & success & solves/cycle & amortized solve (ms) \\
+\midrule
+1 & 30.3\% & 1.00 & 1279 \\
+2 & 29.4\% & 0.50 & 618 \\
+4 & 26.9\% & 0.25 & 273 \\
+8 & 31.9\% & 0.15 & 151 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Trust quality, training, and faults}
+\label{sec:training}
+
+Learned trust tracks hidden reliability at Spearman 0.21 to 0.26 and
+classifies above-median rovers at AUC 0.59 to 0.66 during operation; the
+QUBO-pruned arm achieves the best values. Training the readout on the
+unbiased exploration subset (78 samples) does not improve held-out success
+over fixed weights (36.7\% vs 32.8\%, difference $-3.9$ points, CI
+$[-11.7,+11.7]$, $p=0.49$): with a selection-bias-free but small dataset, the
+trained readout is not better, and we report the null result rather than
+tune until it looks good. Under the scripted fault scenario (most reliable
+rover degraded plus a packet-loss spike), success returns to its pre-fault
+baseline within 3 to 4 cycles after the fault expires, with edge lifecycle
+tracking (active, suspect, probation, removed) keeping pruned links
+observable.
+
+\subsection{Sensitivity}
+
+The projected annealer's exact-solve rate is 87\% on a fixed instance set and
+stays at 87\% under every perturbation we tested: trust weight scaled
+$1.5\times$, uniform utility weights, penalties divided by 5 or multiplied by
+5, sparsity penalty raised to 0.3, and stability penalty raised to 0.6. The
+solver is not fragile to the encoding's free parameters, which matters
+because those parameters are currently chosen by hand.
+
+\begin{table}[t]
+\centering
+\caption{Scaling on range-limited graphs. Connectivity is enforced only for
+$n\le 20$ (marked $^\dagger$); we do not present one curve across the
+transition because the problem changes there. $E$ is soft energy (lower is
+better). MILP values are exact optima from CBC.}
+\label{tab:scaling}
+\begin{tabular}{rrrrrrrr}
+\toprule
+$n$ & $|E|$ & vars & solve (s) & $E_{\mathrm{proj}}$ & $E_{\mathrm{greedy}}$ & $E_{\mathrm{MILP}}$ \\
+\midrule
+$10^\dagger$ & 30 & 427 & 12.6 & $-6.39$ & --- & $-6.39$ \\
+$20^\dagger$ & 63 & 1076 & 41.4 & $-15.05$ & $-11.76$ & $-15.36$ \\
+30 & 95 & 194 & 15.4 & $-21.12$ & $-16.62$ & --- \\
+50 & 169 & 328 & 94.5 & $-36.71$ & $-24.30$ & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -399,96 +568,54 @@ $n$ & $|E|$ & vars & $Q$ (MB) & solve (s) & $E_{\mathrm{proj}}$ & $E_{\mathrm{gr
 \end{axis}
 \end{tikzpicture}
 \caption{Per-decision wall-clock. The QUBO solve dominates by five orders of
-magnitude, which is exactly why the architecture places solving in the cloud
-and only inference at the fog tier.}
+magnitude, which is exactly why solving belongs in the cloud tier.}
 \label{fig:latency}
 \end{figure}
-
-\subsection{Pruning baselines and latency}
-
-Fig.~\ref{fig:latency} and Table~\ref{tab:pruners} show the central tradeoff.
-At 10 rovers, task success is statistically indistinguishable across pruners
-(63.8 to 65.2\% over 10 seeds): the graph is small enough that any reasonable
-pruner works. What differs is cost: the QUBO pruner spends about 1.76\,s per
-cycle (with connectivity enforced), while the GNN inference it protects costs
-about 0.2\,ms. The pruning claim is therefore \emph{not} a latency claim at
-this scale; it is a constraint-satisfaction claim (degree, budget,
-connectivity guarantees that threshold and top-$K$ pruners cannot give), and
-a latency claim only for large fleets or heavily connected graphs, where GNN
-cost grows with edge count.
-
-\begin{table}[t]
-\centering
-\caption{Pruner comparison, 10 rovers, 20 cycles, 10 seeds. Trust Spearman
-is the correlation between learned trust and hidden ground-truth
-reliability.}
-\label{tab:pruners}
-\begin{tabular}{lrrrr}
-\toprule
-pruner & success & solve (ms) & GNN (ms) & trust Spearman \\
-\midrule
-full graph & 63.8\% & 0 & 0.21 & 0.351 \\
-threshold & 64.3\% & 0 & 0.20 & 0.395 \\
-top-$K$ & 65.2\% & 0 & 0.19 & 0.393 \\
-QUBO (ours) & 64.7\% & 1760 & 0.19 & 0.388 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Trust learning}
-
-With faults disabled, trust-aware assignment reaches 56.3\% task success
-against 49.3\% for random assignment over identical scenarios
-($+7.0$ percentage points, 8 seeds, 20 cycles). The margin is stable across
-horizons of 20 to 40 cycles. Training the GNN readout on outcomes collected
-across five scenarios improves held-out success from 50.0\% to 53.3\%.
-Learned trust correlates with ground-truth reliability at Spearman
-0.35 to 0.40 during operation.
-
-\subsection{Fault injection and recovery}
-
-In the scripted scenario, the most reliable rover suffers a reliability drop
-and a packet-loss spike mid-run. Learned trust tracks the degradation, the
-assigner rotates away from the faulty rover, and the task success rate
-returns to its pre-fault baseline within 3 to 4 cycles after the fault
-expires. Edge lifecycle tracking (active, suspect, probation, removed) keeps
-pruned links observable so that a temporarily degraded edge is re-evaluated
-rather than forgotten.
 
 \section{Discussion and Limitations}
 \label{sec:discussion}
 
-Three findings deserve emphasis because they cut against the naive version of
-our own pitch. First, the QUBO encoding is only as good as its solver:
-bit-level annealers, including a production library, solve barely half of
-exactly verifiable instances, so papers that report QUBO encodings without a
-solver-level audit risk reporting formulation errors as model behavior.
-Second, at small fleet sizes the pruner costs far more than the inference it
-protects; the architecture is justified by constraint guarantees and by
-scale, not by small-scale latency. Third, hard connectivity guarantees are
-expensive: enforcing the flow constraints raises per-cycle solve time by an
-order of magnitude in the simulation loop (0.13\,s to 1.76\,s at 10 rovers).
+Three findings cut against the naive version of our own pitch, and we
+consider them the most useful part of the study. First, penalty-encoded
+constrained QUBOs are easy to write and hard to sample: three annealing
+variants solve barely half of verifiable instances, so papers reporting such
+encodings without a solver-level audit risk reporting formulation errors as
+model behavior. Second, on classical hardware the whole QUBO detour is
+strictly dominated by direct MILP, which is exact and 100 times faster; the
+encoding's justification is hardware targeting, not classical performance.
+Third, at small fleet sizes the pruner costs far more than the inference it
+protects and does not beat a threshold pruner on raw success; the
+architecture is justified by guarantees and by scale, not by small-scale
+latency or accuracy.
 
-Limitations. The GNN is intentionally small and its readout training is
-off-policy, since samples come only from assigned nodes. The trust model is a
-single EWMA per node without contextual or multi-armed structure. The dense Q
-matrix bounds the practical fleet size. Simulation uses synthetic reliability
-and mobility; the physical testbed (Fig.~\ref{fig:testbed}) is future work,
-as is evaluation on quantum annealing hardware through the exported Q matrix.
+Limitations. Statistical power is limited (8 to 10 seeds per arm); the
+message-passing margin is not significant; the simulator is synthetic, with
+no wireless channel model, no hardware-in-the-loop, and no quantum hardware
+evaluation (the Q matrix is exported but untested on a QPU); the dense Q
+matrix bounds the practical fleet size at tens of rovers; the scaling study
+enforces connectivity only up to 20 rovers and does not pretend otherwise;
+the trained-readout experiment is a null result on limited data; and the
+utility weights and penalties are hand-chosen, with sensitivity analysis but
+no principled tuning procedure.
 
 \section{Conclusion}
 
 We built and audited a pipeline that couples constrained QUBO graph pruning
-with trust-aware GNN inference for dynamic rover networks. The QUBO encoding
-is provably correct, and once the solver respects feasibility, it is solved
-exactly on every verifiable instance and outperforms feasible greedy pruning
-at every tested scale. Trust-aware assignment measurably improves task
-success, recovers from injected faults in a few cycles, and the whole
-pipeline is open and reproducible. The most useful outcome of the audit may
-be the negative results: they mark precisely where the architecture earns its
-keep and where it does not.
+with trust-aware GNN inference for dynamic rover networks. The encoding is
+derived cleanly and validated exhaustively on finite instances. Once the
+solver respects feasibility, the formulation is solved exactly on every
+instance small enough to enumerate, and to within $10^{-3}$ of exact MILP
+optima on larger ones, while the direct MILP remains the better classical
+solver. End-to-end, trust-aware assignment significantly improves mission
+success over random and trust-only baselines in a simulator where success
+depends causally on the pruned topology. Equally important, the audit
+produced three negative results with real content: annealing samplers
+struggle on penalty-encoded constraints, MILP dominates the QUBO on classical
+hardware, and the pruner trades a few success points for hard guarantees at
+small scale. The codebase, harness, and all reported numbers are open and
+reproducible.
 
-\begin{thebibliography}{9}
+\begin{thebibliography}{12}
 \small
 \bibitem{kipf2017} T.~N. Kipf and M.~Welling, ``Semi-supervised classification
 with graph convolutional networks,'' \emph{ICLR}, 2017.
@@ -502,10 +629,24 @@ formulating and using QUBO models,'' \emph{arXiv:1811.11538}, 2019.
 ``Optimization by simulated annealing,'' \emph{Science}, 220(4598), 1983.
 \bibitem{ocean} D-Wave Systems, ``Ocean SDK and dwave-neal,'' software
 documentation, \url{https://docs.ocean.dwavesys.com/}.
+\bibitem{cbc} J.~Forrest et al., ``COIN-OR branch and cut (CBC),''
+\url{https://github.com/coin-or/Cbc}.
+\bibitem{flowbook} R.~K. Ahuja, T.~L. Magnanti, and J.~B. Orlin,
+\emph{Network Flows: Theory, Algorithms, and Applications}, Prentice Hall,
+1993.
+\bibitem{mrtasurvey} G.~A. Korsah, A.~Stentz, and M.~B. Dias, ``A
+comprehensive taxonomy for multi-robot task allocation,'' \emph{IJRR},
+32(12), 2013.
+\bibitem{auer2002} P.~Auer, N.~Cesa-Bianchi, and P.~Fischer, ``Finite-time
+analysis of the multiarmed bandit problem,'' \emph{Machine Learning}, 47,
+2002.
+\bibitem{sparsification} D.~A. Spielman and S.-H. Teng, ``Spectral
+sparsification of graphs,'' \emph{SIAM J. Comput.}, 40(4), 2011.
 \bibitem{bonomi2012} F.~Bonomi, R.~Milito, J.~Zhu, and S.~Addepalli, ``Fog
 computing and its role in the internet of things,'' \emph{MCC Workshop}, 2012.
-\bibitem{trustsurvey} D.~Ingole et al., ``Trust management in multi-robot
-systems: a survey,'' 2023.
+\bibitem{trustsurvey} J.~Sabater and C.~Sierra, ``Review on computational
+trust and reputation models,'' \emph{Artificial Intelligence Review}, 24(1),
+2005.
 \end{thebibliography}
 
 \end{document}
