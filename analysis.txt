@@ -1,0 +1,68 @@
+
+## budget sweep (384 cells)
+  budget=0.35: full=0.3604(d158.8/b20.0/c0.4) threshold=0.3698(d131.7/b20.0/c2.3) topk=0.3635(d53.6/b18.0/c10.0) threshold_repair=0.3469(d3.2/b2.9/c0.8) topk_repair=0.3438(d1.4/b3.0/c0.8) qubo=0.3458(d0.0/b5.4/c0.4)
+    qubo - threshold_repair: -0.0010 CI [-0.0323,+0.0312] p=1.0000
+    qubo - topk_repair: +0.0021 CI [-0.0354,+0.0385] p=0.9531
+  budget=0.5: full=0.3604(d158.8/b20.0/c0.4) threshold=0.3698(d131.7/b19.6/c2.3) topk=0.3635(d53.6/b0.0/c10.0) threshold_repair=0.3521(d3.1/b0.5/c0.8) topk_repair=0.3531(d1.1/b0.3/c0.9) qubo=0.3156(d0.0/b0.2/c0.4)
+    qubo - threshold_repair: -0.0365 CI [-0.0646,-0.0094] p=0.0331
+    qubo - topk_repair: -0.0375 CI [-0.0698,-0.0052] p=0.0472
+  budget=0.75: full=0.3604(d158.8/b20.0/c0.4) threshold=0.3698(d131.7/b12.8/c2.3) topk=0.3635(d53.6/b0.0/c10.0) threshold_repair=0.3531(d3.1/b0.3/c0.8) topk_repair=0.3542(d1.1/b0.0/c0.9) qubo=0.3125(d0.0/b0.0/c0.4)
+    qubo - threshold_repair: -0.0406 CI [-0.0635,-0.0187] p=0.0044
+    qubo - topk_repair: -0.0417 CI [-0.0698,-0.0146] p=0.0170
+  budget=1.0: full=0.3604(d158.8/b0.0/c0.4) threshold=0.3698(d131.7/b0.0/c2.3) topk=0.3635(d53.6/b0.0/c10.0) threshold_repair=0.3531(d3.1/b0.0/c0.8) topk_repair=0.3542(d1.1/b0.0/c0.9) qubo=0.3167(d0.0/b0.0/c0.4)
+    qubo - threshold_repair: -0.0365 CI [-0.0615,-0.0115] p=0.0196
+    qubo - topk_repair: -0.0375 CI [-0.0677,-0.0073] p=0.0383
+
+## degree sweep (288 cells)
+  degree=2: full=0.3604(d183.6/b20.0/c0.4) threshold=0.3698(d165.2/b20.0/c2.3) topk=0.3635(d98.3/b20.0/c10.0) threshold_repair=0.3427(d34.9/b20.0/c0.4) topk_repair=0.3427(d34.4/b20.0/c0.4) qubo=0.3094(d0.0/b19.4/c0.7)
+    qubo - threshold_repair: -0.0333 CI [-0.0719,+0.0073] p=0.1465
+    qubo - topk_repair: -0.0333 CI [-0.0719,+0.0073] p=0.1465
+  degree=3: full=0.3604(d158.8/b20.0/c0.4) threshold=0.3698(d131.7/b20.0/c2.3) topk=0.3635(d53.6/b20.0/c10.0) threshold_repair=0.3427(d4.7/b20.0/c0.4) topk_repair=0.3479(d3.4/b19.9/c0.4) qubo=0.3219(d0.0/b19.9/c0.4)
+    qubo - threshold_repair: -0.0208 CI [-0.0417,+0.0021] p=0.1019
+    qubo - topk_repair: -0.0260 CI [-0.0469,-0.0031] p=0.0417
+  degree=4: full=0.3604(d127.2/b20.0/c0.4) threshold=0.3698(d96.8/b20.0/c2.3) topk=0.3635(d21.8/b20.0/c10.0) threshold_repair=0.3427(d2.2/b20.0/c0.4) topk_repair=0.3479(d0.7/b19.8/c0.4) qubo=0.3333(d0.0/b19.9/c0.4)
+    qubo - threshold_repair: -0.0094 CI [-0.0344,+0.0146] p=0.5202
+    qubo - topk_repair: -0.0146 CI [-0.0396,+0.0115] p=0.3301
+
+## roster sweep (288 cells)
+  roster=3: full=0.3604(d158.8/b20.0/c0.4) threshold=0.3698(d131.7/b20.0/c2.3) topk=0.3635(d53.6/b20.0/c10.0) threshold_repair=0.3427(d4.7/b20.0/c0.4) topk_repair=0.3479(d3.4/b19.9/c0.4) qubo=0.3219(d0.0/b19.9/c0.4)
+    qubo - threshold_repair: -0.0208 CI [-0.0417,+0.0021] p=0.1019
+    qubo - topk_repair: -0.0260 CI [-0.0469,-0.0031] p=0.0417
+  roster=5: full=0.3573(d163.6/b20.0/c0.6) threshold=0.3552(d135.2/b20.0/c2.6) topk=0.3688(d57.8/b20.0/c12.3) threshold_repair=0.3510(d5.4/b20.0/c0.6) topk_repair=0.3510(d3.4/b20.0/c0.6) qubo=0.3240(d0.0/b19.9/c0.6)
+    qubo - threshold_repair: -0.0271 CI [-0.0510,-0.0042] p=0.0583
+    qubo - topk_repair: -0.0271 CI [-0.0510,-0.0042] p=0.0583
+  roster=8: full=0.4094(d155.9/b20.0/c1.9) threshold=0.4229(d131.4/b20.0/c4.0) topk=0.3948(d60.2/b20.0/c13.9) threshold_repair=0.3781(d12.2/b20.0/c1.9) topk_repair=0.3781(d5.9/b20.0/c1.9) qubo=0.3458(d0.0/b19.9/c1.9)
+    qubo - threshold_repair: -0.0323 CI [-0.0563,-0.0094] p=0.0197
+    qubo - topk_repair: -0.0323 CI [-0.0563,-0.0094] p=0.0197
+
+## benchmark K=15 nominal (16 seeds)
+               full: succ 0.3604 offload 1.0000 delfail 0.3854 solve 0.0ms kept 1.000 prec 0.0886 rec 1.0000 viol 158.81/20.00/0.38 spearman 0.2707
+          threshold: succ 0.3698 offload 0.9552 delfail 0.3398 solve 0.0ms kept 0.842 prec 0.0969 rec 0.9306 viol 131.69/20.00/2.31 spearman 0.2544
+               topk: succ 0.3635 offload 0.8979 delfail 0.3090 solve 0.0ms kept 0.500 prec 0.1091 rec 0.5617 viol 53.62/20.00/10.00 spearman 0.2509
+   threshold_repair: succ 0.3427 offload 1.0000 delfail 0.3958 solve 0.4ms kept 0.364 prec 0.2050 rec 0.7872 viol 4.69/20.00/0.38 spearman 0.2487
+        topk_repair: succ 0.3479 offload 1.0000 delfail 0.3917 solve 0.2ms kept 0.357 prec 0.2042 rec 0.7824 viol 3.38/19.88/0.38 spearman 0.2419
+               qubo: succ 0.3219 offload 0.9979 delfail 0.4176 solve 1434.5ms kept 0.536 prec 0.1149 rec 0.6620 viol 0.00/19.94/0.38 spearman 0.2721
+  qubo modes: {'no-budget': 319, 'mission-unreachable': 6, 'full': 1} (of 320 cycles)
+  qubo - threshold: -0.0479 CI [-0.0729,-0.0250] p=0.0020
+  qubo - threshold_repair: -0.0208 CI [-0.0417,+0.0021] p=0.1019
+  qubo - topk_repair: -0.0260 CI [-0.0469,-0.0031] p=0.0417
+  qubo - threshold_repair [delfail]: +0.0217 CI [-0.0025,+0.0457]
+  qubo - threshold_repair [offload]: -0.0021 CI [-0.0062,+0.0000]
+  qubo - topk [delfail]: +0.1086 CI [+0.0701,+0.1462]
+  qubo - topk [offload]: +0.1000 CI [+0.0542,+0.1521]
+
+## benchmark K=0.75 binding (16 seeds)
+               full: succ 0.3604 offload 1.0000 delfail 0.3854 solve 0.0ms kept 1.000 prec 0.0886 rec 1.0000 viol 158.81/20.00/0.38 spearman 0.2707
+          threshold: succ 0.3698 offload 0.9552 delfail 0.3398 solve 0.0ms kept 0.842 prec 0.0969 rec 0.9306 viol 131.69/12.81/2.31 spearman 0.2544
+               topk: succ 0.3635 offload 0.8979 delfail 0.3090 solve 0.0ms kept 0.500 prec 0.1091 rec 0.5617 viol 53.62/0.00/10.00 spearman 0.2509
+   threshold_repair: succ 0.3531 offload 0.9958 delfail 0.3827 solve 0.3ms kept 0.440 prec 0.1771 rec 0.8165 viol 3.06/0.31/0.81 spearman 0.2662
+        topk_repair: succ 0.3542 offload 0.9969 delfail 0.3928 solve 0.1ms kept 0.420 prec 0.1866 rec 0.8242 viol 1.12/0.00/0.88 spearman 0.2525
+               qubo: succ 0.3125 offload 0.9979 delfail 0.4272 solve 1470.4ms kept 0.532 prec 0.1163 rec 0.6727 viol 0.00/0.00/0.38 spearman 0.2947
+  qubo modes: {'full': 320, 'mission-unreachable': 6} (of 320 cycles)
+  qubo - threshold: -0.0573 CI [-0.0865,-0.0292] p=0.0016
+  qubo - threshold_repair: -0.0406 CI [-0.0635,-0.0187] p=0.0044
+  qubo - topk_repair: -0.0417 CI [-0.0698,-0.0146] p=0.0170
+  qubo - threshold_repair [delfail]: +0.0444 CI [+0.0138,+0.0804]
+  qubo - threshold_repair [offload]: +0.0021 CI [-0.0042,+0.0083]
+  qubo - topk [delfail]: +0.1182 CI [+0.0757,+0.1604]
+  qubo - topk [offload]: +0.1000 CI [+0.0542,+0.1521]

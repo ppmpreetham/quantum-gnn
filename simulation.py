@@ -221,13 +221,23 @@ class RoverSimulation:
         n_mission_critical: int = 3,
         reliability_drift: float = 0.0,   # per-cycle std of hidden reliability walk
         qubo_budget: int = 15,   # global edge-cost budget for the QUBO pruner
+        degree_cap: int = 3,     # per-node degree cap for ALL constrained arms
+        budget_factor: Optional[float] = None,
+        # if set, the global budget is budget_factor x the total cost of the
+        # current cycle's candidate graph (relative pressure, comparable
+        # across cycles); if None, the fixed qubo_budget above is used
     ) -> None:
-        if pruner not in ("qubo", "full", "threshold", "topk"):
+        if pruner not in ("qubo", "full", "threshold", "topk",
+                          "threshold_repair", "topk_repair"):
             raise ValueError(f"unknown pruner {pruner}")
         if assigner not in ("gnn", "trust_only", "nograph", "random"):
             raise ValueError(f"unknown assigner {assigner}")
         if solve_interval <= 0:
             raise ValueError("solve_interval must be positive")
+        if degree_cap < 1:
+            raise ValueError("degree_cap must be at least 1")
+        if budget_factor is not None and not 0.0 < budget_factor <= 1.0:
+            raise ValueError("budget_factor must be in (0, 1]")
         self.rng = np.random.default_rng(seed)
         self.nodes: List[Node] = list(range(n_rovers))
         self.tasks_per_cycle = tasks_per_cycle
@@ -250,6 +260,8 @@ class RoverSimulation:
         self.solve_interval = solve_interval
         self.reliability_drift = reliability_drift
         self.qubo_budget = qubo_budget
+        self.degree_cap = degree_cap
+        self.budget_factor = budget_factor
 
         self.state: Dict[Node, RoverState] = {}
         # spatially correlated reliability field: nearby rovers share
@@ -305,6 +317,11 @@ class RoverSimulation:
         self.prune_mode_counts: Dict[str, int] = {}
         self.solves_performed = 0
         self.edges_history: List[Tuple[int, int]] = []  # (candidates, kept)
+        # constraint-violation and delivery bookkeeping (per cycle)
+        self.violation_history: List[Dict[str, int]] = []
+        self.assignment_history: List[Tuple[int, int]] = []  # (assigned, tasks)
+        self.delivery_outcomes: List[Tuple[int, int, int]] = []  # (ok, delivered, failed)
+        self.prune_eval_history: List[Tuple[float, float]] = []  # (precision, recall)
 
     def _default_faults(self) -> List[FaultEvent]:
         c = max(2, self.steps // 3)
@@ -414,21 +431,34 @@ class RoverSimulation:
                cycle: int) -> Tuple[List[Edge], float, float]:
         """Return (kept_edges, build_seconds, solve_seconds)."""
         if self.pruner == "full":
-            return list(edges), 0.0, 0.0
-        if self.pruner == "threshold":
-            kept = [e for e in edges
-                    if edge_utility(features[e]) >= self.threshold_tau]
-            # honest cost: the heuristic itself, measured (microseconds)
+            t_ms = _timed_median_ms(lambda: list(edges))
+            return list(edges), 0.0, t_ms / 1e3
+        if self.pruner in ("threshold", "threshold_repair"):
+            # honest cost: the heuristic itself, measured (microseconds);
+            # the constraint-aware variant adds the repair pass
             t_ms = _timed_median_ms(lambda: [
                 e for e in edges
                 if edge_utility(features[e]) >= self.threshold_tau])
-            return kept, 0.0, t_ms / 1e3
-        if self.pruner == "topk":
+            kept = [e for e in edges
+                    if edge_utility(features[e]) >= self.threshold_tau]
+            t_solve = t_ms / 1e3
+            if self.pruner == "threshold_repair" and kept:
+                t0 = time.perf_counter()
+                kept, _ = self._repair(edges, kept, features)
+                t_solve += time.perf_counter() - t0
+            return kept, 0.0, t_solve
+        if self.pruner in ("topk", "topk_repair"):
             k = max(1, int(round(self.topk_fraction * len(edges))))
             ranked = sorted(edges, key=lambda e: -edge_utility(features[e]))
             t_ms = _timed_median_ms(lambda: sorted(
                 edges, key=lambda e: -edge_utility(features[e])))
-            return sorted(ranked[:k]), 0.0, t_ms / 1e3
+            kept = sorted(ranked[:k])
+            t_solve = t_ms / 1e3
+            if self.pruner == "topk_repair":
+                t0 = time.perf_counter()
+                kept, _ = self._repair(edges, kept, features)
+                t_solve += time.perf_counter() - t0
+            return kept, 0.0, t_solve
 
         # cloud amortization: solve every solve_interval cycles, reuse the
         # stale decision (intersected with the live graph) in between
@@ -468,14 +498,15 @@ class RoverSimulation:
         # Progressive relaxation: connectivity + budget can be jointly
         # infeasible under tight degree caps; drop budget, then connectivity.
         # Every fallback is counted so the guarantee's coverage is measurable.
+        attempts_budget = self._effective_budget(features)
         attempts = [
             ("full", dict(required_nodes=required or None,
                           root=self.root if required else None,
-                          global_budget=self.qubo_budget)),
+                          global_budget=attempts_budget)),
             ("no-budget", dict(required_nodes=required or None,
                                root=self.root if required else None,
                                global_budget=None)),
-            ("budget-only", dict(global_budget=self.qubo_budget)),
+            ("budget-only", dict(global_budget=attempts_budget)),
             ("unconstrained", dict()),
         ]
         result = None
@@ -487,7 +518,7 @@ class RoverSimulation:
                     edges=edges,
                     features=features,
                     previous_decisions=self.previous_decisions,
-                    degree_limits={n: 3 for n in self.nodes},
+                    degree_limits={n: self.degree_cap for n in self.nodes},
                     **extra,
                 )
             except ValueError:
@@ -510,6 +541,152 @@ class RoverSimulation:
         self.prune_mode_counts[mode] = self.prune_mode_counts.get(mode, 0) + 1
         self.last_kept = result.kept_edges
         return result.kept_edges, t1 - t0, t2 - t1
+
+    def _effective_budget(self, features: Dict[Edge, EdgeFeatures]) -> int:
+        """Global cost budget actually enforced: either the fixed qubo_budget
+        or budget_factor x the total cost of this cycle's candidate graph
+        (relative pressure). Deterministic given the features."""
+        if self.budget_factor is None:
+            return self.qubo_budget
+        total = sum(max(1, int(round(f.processing_cost * 10)))
+                    for f in features.values())
+        return max(1, int(round(total * self.budget_factor)))
+
+    def _mst(self, edges: List[Edge],
+            features: Dict[Edge, EdgeFeatures]) -> List[Edge]:
+        """Minimum-processing-cost spanning tree (Kruskal, deterministic).
+        The cheapest connected subgraph: the repair's best-effort core."""
+        parent = {n: n for n in self.nodes}
+
+        def find(x):
+            while parent[x] != x:
+                parent[x] = parent[parent[x]]
+                x = parent[x]
+            return x
+
+        mst: List[Edge] = []
+        for e in sorted(edges,
+                        key=lambda e: (features[e].processing_cost, e)):
+            ru, rv = find(e[0]), find(e[1])
+            if ru != rv:
+                parent[ru] = rv
+                mst.append(e)
+        return mst
+
+    def _repair(self, edges: List[Edge], selected: List[Edge],
+                features: Dict[Edge, EdgeFeatures]) -> Tuple[List[Edge], bool]:
+        """Constraint-aware baseline repair: given a heuristic's edge pick,
+        restore feasibility w.r.t. the SAME constraints the QUBO is given
+        (degree caps, the global cost budget, mission-critical
+        connectivity). Seed the minimum-cost spanning tree when connectivity
+        is missing, then drop lowest-utility edges on degree/budget
+        violations. If the budget is below the cheapest connected subgraph,
+        keep the MST and report the residual violation honestly. Returns
+        (repaired_edges, fully_feasible)."""
+        keep = set(selected)
+        budget = self._effective_budget(features)
+        tree = set(self._mst(edges, features))
+
+        def cost(es) -> int:
+            return sum(max(1, int(round(features[e].processing_cost * 10)))
+                       for e in es)
+
+        def over_cap_nodes(es) -> set:
+            deg = {n: 0 for n in self.nodes}
+            for u, v in es:
+                deg[u] += 1
+                deg[v] += 1
+            return {n for n in self.nodes if deg[n] > self.degree_cap}
+
+        def disconnected(es) -> bool:
+            adj = {n: [] for n in self.nodes}
+            for u, v in es:
+                adj[u].append(v)
+                adj[v].append(u)
+            seen = {self.root}
+            stack = [self.root]
+            while stack:
+                for w in adj[stack.pop()]:
+                    if w not in seen:
+                        seen.add(w)
+                        stack.append(w)
+            return any(n not in seen for n in self.mission_critical)
+
+        if disconnected(keep):
+            keep |= tree
+        for _ in range(2 * len(keep) + len(self.nodes) + 4):
+            od = over_cap_nodes(keep)
+            ob = cost(keep) > budget
+            dc = disconnected(keep)
+            if not (od or ob or dc):
+                return sorted(keep), True
+            if ob and cost(tree) > budget and keep.issubset(tree):
+                # budget below the cheapest connected subgraph: the MST is
+                # the minimum-violation best effort; residual violation is
+                # reported by the caller's violation bookkeeping
+                return sorted(tree), False
+            if dc:
+                keep |= tree
+                continue
+            pool = [e for e in keep if e not in tree] or list(keep)
+            if od:
+                inc = [e for e in pool if e[0] in od or e[1] in od]
+                pool = inc or pool
+            if not pool:
+                return sorted(keep), False
+            keep.discard(min(pool, key=lambda e: edge_utility(features[e])))
+        return sorted(keep), False
+
+    def _violation_checks(self, edges: List[Edge], kept: List[Edge],
+                          features: Dict[Edge, EdgeFeatures]) -> Dict[str, int]:
+        """Count constraint violations of the PRUNED graph against the same
+        constraints the QUBO arm is given: the degree cap, the effective
+        global cost budget, and connectivity of the fixed mission-critical
+        set."""
+        kept_set = set(kept)
+        budget = self._effective_budget(features)
+        cost = sum(max(1, int(round(features[e].processing_cost * 10)))
+                   for e in kept_set)
+        deg: Dict[Node, int] = {n: 0 for n in self.nodes}
+        for u, v in kept_set:
+            deg[u] += 1
+            deg[v] += 1
+        adjacency = {n: [] for n in self.nodes}
+        for u, v in kept_set:
+            adjacency[u].append(v)
+            adjacency[v].append(u)
+        seen = {self.root}
+        stack = [self.root]
+        while stack:
+            for w in adjacency[stack.pop()]:
+                if w not in seen:
+                    seen.add(w)
+                    stack.append(w)
+        return {
+            "degree": sum(1 for n in self.nodes if deg[n] > self.degree_cap),
+            "budget": int(cost > budget),
+            "connectivity": int(
+                any(n not in seen for n in self.mission_critical)),
+        }
+
+    def _delivery_critical(self, edges: List[Edge],
+                           features: Dict[Edge, EdgeFeatures]) -> set:
+        """Ground truth for pruning classification: an edge is
+        delivery-critical iff removing it from the FULL candidate graph
+        strictly reduces the widest-path delivery bottleneck of at least one
+        mission-critical node (path_factor is the success probability of
+        result delivery, so these edges are exactly the ones the delivery
+        objective cannot afford to lose)."""
+        base = self._path_factors(edges, features)
+        base_score = min(base[n] for n in self.mission_critical)
+        critical = set()
+        for e in edges:
+            reduced = [x for x in edges if x != e]
+            f2 = self._path_factors(reduced, features)
+            if (min(f2[n] for n in self.mission_critical)
+                    < base_score - 1e-9):
+                critical.add(e)
+        return critical
 
     # --------------------------------------------------------------
     # One pipeline cycle
@@ -585,6 +762,8 @@ class RoverSimulation:
         kept, t_build, t_solve = self._prune(edges, features, cycle)
         self.previous_decisions = {e: 1 for e in kept}
         self.lifecycle.update(edges, kept)
+        self.violation_history.append(
+            self._violation_checks(edges, kept, features))
 
         node_features = {
             n: NodeFeatures(
@@ -670,6 +849,8 @@ class RoverSimulation:
         # success additionally requires the result to cross the kept
         # topology to the root (delivery over the weakest path link)
         successes = 0
+        delivered_ok = 0
+        delivered_failures = 0
         assigned_nodes = set(assignment.values())
         self.node_criticality = {n: 0.3 for n in self.nodes}
         for tid, n in assignment.items():
@@ -680,6 +861,8 @@ class RoverSimulation:
             delivered = n == self.root or self.rng.random() < path_factor[n]
             ok = exec_ok and delivered
             successes += int(ok)
+            delivered_ok += int(delivered)
+            delivered_failures += int(not delivered)
             self.trust.update(n, 1.0 if exec_ok else 0.0)
             self.state[n].load = min(0.95, self.state[n].load
                                      + self.load_increment)
@@ -694,6 +877,17 @@ class RoverSimulation:
         rate = successes / max(1, len(tasks))
         self.success_history.append(rate)
         self.edges_history.append((len(edges), len(kept)))
+        self.assignment_history.append((len(assignment), len(tasks)))
+        self.delivery_outcomes.append(
+            (successes, delivered_ok, delivered_failures))
+        # delivery-critical pruning precision/recall for this cycle
+        critical = self._delivery_critical(edges, features)
+        kept_set = set(kept)
+        precision = (len(critical & kept_set) / len(kept_set)
+                     if kept_set else float("nan"))
+        recall = (len(critical & kept_set) / len(critical)
+                  if critical else float("nan"))
+        self.prune_eval_history.append((precision, recall))
         self.trust_spearman.append(spearman(
             [self.trust.get(n) for n in self.nodes],
             [self.state[n].reliability for n in self.nodes],
@@ -751,8 +945,28 @@ class RoverSimulation:
         kept_ratio = (float(np.mean([k / c for c, k in self.edges_history
                                      if c > 0]))
                       if self.edges_history else float("nan"))
+        total_task_slots = len(self.success_history) * self.tasks_per_cycle
+        assigned_total = sum(a for a, _ in self.assignment_history)
+        d_ok = sum(o for _, o, _ in self.delivery_outcomes)
+        d_fail = sum(f for _, _, f in self.delivery_outcomes)
+        viol = {k: sum(v[k] for v in self.violation_history)
+                for k in ("degree", "budget", "connectivity")} \
+            if self.violation_history else {
+                "degree": 0, "budget": 0, "connectivity": 0}
+        precisions = [p for p, _ in self.prune_eval_history]
+        recalls = [r for _, r in self.prune_eval_history]
+        prec = (float(np.nanmean(precisions))
+                if any(np.isfinite(p) for p in precisions) else float("nan"))
+        rec = (float(np.nanmean(recalls))
+               if any(np.isfinite(r) for r in recalls) else float("nan"))
         return {
             "success_rate": total_ok / max(1, total),
+            "offload_rate": assigned_total / max(1, total_task_slots),
+            "delivery_fail_rate": d_fail / max(1, d_ok + d_fail),
+            "delivery_failures": d_fail,
+            "pruning_precision": prec,
+            "pruning_recall": rec,
+            "violations": viol,
             "timings_ms": timings,
             "trust_spearman": (float(np.nanmean(self.trust_spearman))
                                if self.trust_spearman else float("nan")),
@@ -803,12 +1017,16 @@ def run_benchmark(steps: int = 20, seeds: int = 10,
     Identical scenario through each pruner; the paper's headline table.
     Uses a denser fleet (10 rovers) — at 6 rovers the graph is so sparse
     that pruning rarely binds, which the table should honestly show.
-    Reports paired statistics (bootstrap CI + permutation p) for QUBO vs the
-    best baseline, replacing bare "indistinguishable" claims.
+    Includes constraint-aware repaired variants of threshold/top-K, which
+    are given the same degree caps, budget, and mission-critical connectivity
+    requirement as the QUBO arm, so the guarantees comparison is not a
+    straw man. Reports paired statistics (bootstrap CI + permutation p)
+    for QUBO vs the best baseline on per-seed success.
     """
     configs = dict(n_rovers=10, comm_range=6.0, tasks_per_cycle=3,
                    reliability_drift=reliability_drift)
-    pruners = ("full", "threshold", "topk", "qubo")
+    pruners = ("full", "threshold", "topk", "threshold_repair",
+               "topk_repair", "qubo")
     rows: Dict[str, List[dict]] = {p: [] for p in pruners}
     for s in range(seeds):
         for pruner in pruners:
@@ -816,17 +1034,21 @@ def run_benchmark(steps: int = 20, seeds: int = 10,
             rows[pruner].append(sim.run(verbose=False))
     print(f"pruner comparison: {configs['n_rovers']} rovers, "
           f"{steps} cycles x {seeds} seeds, drift={reliability_drift}")
-    print(f"{'pruner':10s} {'success':>8s} {'solve ms':>9s} {'gnn ms':>8s} "
-          f"{'kept%':>7s} {'spearman':>9s} {'auc':>6s}")
+    print(f"{'pruner':17s} {'success':>8s} {'offload':>8s} {'delfail':>8s} "
+          f"{'solve ms':>9s} {'kept%':>6s} {'viol':>14s} "
+          f"{'spearman':>9s} {'auc':>6s}")
     for pruner, runs in rows.items():
-        succ = float(np.mean([r["success_rate"] for r in runs]))
+        def m(key):
+            vals = [r[key] for r in runs if np.isfinite(r[key])]
+            return float(np.mean(vals)) if vals else float("nan")
         solve = float(np.mean([r["timings_ms"]["solve"] for r in runs]))
-        gnn = float(np.mean([r["timings_ms"]["gnn"] for r in runs]))
         kept = float(np.nanmean([r["kept_ratio"] for r in runs]))
-        sp = float(np.nanmean([r["trust_spearman"] for r in runs]))
-        a = float(np.nanmean([r["trust_auc"] for r in runs]))
-        print(f"{pruner:10s} {succ:8.2%} {solve:9.2f} {gnn:8.2f} "
-              f"{kept*100:6.0f}% {sp:9.3f} {a:6.3f}")
+        viol = {k: int(np.mean([r["violations"][k] for r in runs]))
+                for k in ("degree", "budget", "connectivity")}
+        vstr = f"{viol['degree']}/{viol['budget']}/{viol['connectivity']}"
+        print(f"{pruner:17s} {m('success_rate'):8.2%} {m('offload_rate'):8.2%} "
+              f"{m('delivery_fail_rate'):8.2%} {solve:9.2f} {kept*100:5.0f}% "
+              f"{vstr:>14s} {m('trust_spearman'):9.3f} {m('trust_auc'):6.3f}")
     # paired statistics: QUBO vs best baseline on per-seed success
     best_baseline = max((p for p in pruners if p != "qubo"),
                         key=lambda p: np.mean([r["success_rate"]

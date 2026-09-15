@@ -1,0 +1,272 @@
+{
+ "instance": {
+  "nodes": [
+   0,
+   1,
+   2,
+   3,
+   4
+  ],
+  "edges": [
+   [
+    0,
+    1
+   ],
+   [
+    0,
+    2
+   ],
+   [
+    0,
+    3
+   ],
+   [
+    1,
+    2
+   ],
+   [
+    2,
+    3
+   ],
+   [
+    2,
+    4
+   ],
+   [
+    3,
+    4
+   ]
+  ],
+  "hard_critical": [
+   0,
+   1
+  ],
+  "required": [
+   0,
+   2,
+   3,
+   4
+  ],
+  "root": 0,
+  "degree_limits": {
+   "0": 3,
+   "1": 2,
+   "2": 3,
+   "3": 2,
+   "4": 2
+  },
+  "budget_units": 12,
+  "edge_costs": {
+   "0-1": 2,
+   "0-2": 1,
+   "0-3": 8,
+   "1-2": 3,
+   "2-3": 4,
+   "2-4": 2,
+   "3-4": 6
+  },
+  "utilities": {
+   "0-2": 0.9,
+   "0-3": 0.405,
+   "1-2": 0.705,
+   "2-3": 0.75,
+   "2-4": 0.79,
+   "3-4": 0.555
+  },
+  "previous": {
+   "0-1": 1,
+   "0-2": 1,
+   "0-3": 0,
+   "1-2": 1,
+   "2-3": 1,
+   "2-4": 0,
+   "3-4": 1
+  },
+  "soft_terms": {
+   "edge_penalty": 0.08,
+   "stability_penalty": 0.15,
+   "w_trust": 0.25,
+   "w_link": 0.25,
+   "w_battery": 0.1,
+   "w_proximity": 0.1,
+   "w_freshness": 0.15,
+   "w_task": 0.15,
+   "degree_penalty": 100.0,
+   "budget_penalty": 100.0
+  }
+ },
+ "qubo": {
+  "n_variables": 61,
+  "n_edge_vars": 6,
+  "n_slack_flow_vars": 55
+ },
+ "brute_force": {
+  "n_subsets": 64,
+  "n_feasible": 3,
+  "n_infeasible": 61,
+  "n_conn_traps": 30,
+  "best_feasible": {
+   "kept": [
+    "0-1",
+    "0-2",
+    "2-3",
+    "2-4"
+   ],
+   "n_kept": 4,
+   "energy": -1.7500000000000004,
+   "feasible": true,
+   "degree_over": 0.0,
+   "budget_over": 0.0,
+   "disconnected": [],
+   "total_cost": 9
+  },
+  "best_degree_budget_violator": {
+   "kept": [
+    "0-1",
+    "0-2",
+    "1-2",
+    "2-3",
+    "2-4"
+   ],
+   "n_kept": 5,
+   "energy": 97.475,
+   "feasible": false,
+   "degree_over": 1,
+   "budget_over": 0.0,
+   "disconnected": [],
+   "total_cost": 12
+  },
+  "best_connectivity_trap": {
+   "kept": [
+    "0-1",
+    "0-2",
+    "1-2",
+    "2-3"
+   ],
+   "n_kept": 4,
+   "energy": -1.9650000000000003,
+   "feasible": false,
+   "degree_over": 0.0,
+   "budget_over": 0.0,
+   "disconnected": [
+    4
+   ],
+   "total_cost": 10
+  },
+  "feasible_energy_band": [
+   -1.7500000000000004,
+   -1.5550000000000002
+  ],
+  "degree_budget_barrier": 99.225,
+  "trap_lure": 0.21499999999999986,
+  "top5_feasible": [
+   {
+    "kept": [
+     "0-1",
+     "0-2",
+     "2-3",
+     "2-4"
+    ],
+    "n_kept": 4,
+    "energy": -1.7500000000000004,
+    "feasible": true,
+    "degree_over": 0.0,
+    "budget_over": 0.0,
+    "disconnected": [],
+    "total_cost": 9
+   },
+   {
+    "kept": [
+     "0-1",
+     "1-2",
+     "2-3",
+     "2-4"
+    ],
+    "n_kept": 4,
+    "energy": -1.5550000000000002,
+    "feasible": true,
+    "degree_over": 0.0,
+    "budget_over": 0.0,
+    "disconnected": [],
+    "total_cost": 11
+   },
+   {
+    "kept": [
+     "0-1",
+     "0-2",
+     "2-4",
+     "3-4"
+    ],
+    "n_kept": 4,
+    "energy": -1.5550000000000002,
+    "feasible": true,
+    "degree_over": 0.0,
+    "budget_over": 0.0,
+    "disconnected": [],
+    "total_cost": 11
+   }
+  ],
+  "cheapest_infeasible_traps": [
+   {
+    "kept": [
+     "0-1",
+     "0-2",
+     "1-2",
+     "2-3"
+    ],
+    "n_kept": 4,
+    "energy": -1.9650000000000003,
+    "feasible": false,
+    "degree_over": 0.0,
+    "budget_over": 0.0,
+    "disconnected": [
+     4
+    ],
+    "total_cost": 10
+   },
+   {
+    "kept": [
+     "0-1",
+     "0-2",
+     "1-2",
+     "3-4"
+    ],
+    "n_kept": 4,
+    "energy": -1.7700000000000005,
+    "feasible": false,
+    "degree_over": 0.0,
+    "budget_over": 0.0,
+    "disconnected": [
+     3,
+     4
+    ],
+    "total_cost": 12
+   }
+  ]
+ },
+ "cross_check": {
+  "qmatrix_energy": -1.75,
+  "matches_enumeration": true
+ },
+ "annealer": {
+  "kept": [
+   "0-1",
+   "0-2",
+   "2-3",
+   "2-4"
+  ],
+  "energy": -1.75,
+  "violations": [],
+  "is_optimal": true
+ },
+ "milp": {
+  "soft_energy": -1.7500000000000002,
+  "kept": [
+   "0-1",
+   "0-2",
+   "2-3",
+   "2-4"
+  ],
+  "matches_bruteforce": true
+ }
+}

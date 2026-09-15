@@ -53,6 +53,18 @@ pruned topology. We report negative results with equal prominence: the QUBO
 pruner does not beat a threshold pruner on raw success at ten-rover scale,
 message passing adds a statistically insignificant margin over a no-graph
 readout, and a cloud-trained readout does not improve over fixed weights.
+A constraint-pressure sweep pushes the budget and degree constraints across
+ten tightening levels against constraint-aware repaired baselines: the
+QUBO pruner is the only arm with zero degree violations at every level, but
+even at extreme budget pressure it only ties the best repaired baseline on
+success, never beats it. We also audit the audit: at the paper's nominal fixed budget
+the QUBO's own relaxation ladder silently drops the budget constraint in 319
+of 320 cycles because that budget is below the cost of any connected
+subgraph, so the original comparison was effectively unconstrained for the
+QUBO arm; all headline comparisons are re-run at a feasible, binding budget.
+Beyond success we report offload rate, per-cycle delivery-failure rate, and
+a delivery-critical pruning precision/recall against a per-cycle
+counterfactual ground truth.
 \end{abstract}
 
 \section{Introduction}
@@ -92,9 +104,12 @@ rehabilitation, and explicit ablations isolating what the GNN contributes
 over trust-only and no-graph baselines, with paired statistics
 (Section~\ref{sec:gnn}).
 \item An end-to-end evaluation in which mission success depends causally on
-the pruned topology, including pruning baselines, latency, staleness under
-cloud-amortized solving, fault recovery, sensitivity analysis, and negative
-results (Section~\ref{sec:eval}).
+the pruned topology, including constraint-aware repaired baselines given the
+same constraints as the QUBO, a constraint-pressure sweep across ten
+budget/degree/roster levels, latency, staleness under cloud-amortized solving,
+fault recovery, sensitivity analysis, offload and delivery-failure metrics,
+delivery-critical pruning precision/recall, and negative results
+(Section~\ref{sec:eval}).
 \end{itemize}
 
 \section{Related Work}
@@ -417,39 +432,156 @@ and we report it as such.
 
 \subsection{Pruning baselines and the honest pruner table}
 
-Table~\ref{tab:pruners} compares the QUBO pruner against three baselines over
-identical scenarios (10 rovers, 20 cycles, 10 seeds, drifting reliability).
-Two results deserve emphasis. First, mission success now depends on the
-pruned topology by construction (delivery over the kept graph), so the table
-measures a real causal effect. Second, the QUBO pruner \emph{loses} on raw
-success: $-4.3$ points against the threshold pruner, paired bootstrap 95\% CI
-$[-7.0, -1.5]$, permutation $p=0.028$. The QUBO's edge-local utility optimum
-removes redundancy that bottleneck-path delivery needs; keeping 84 to 100\%
-of edges wins on delivery at this scale. What the QUBO buys is not success
-but guarantees: degree caps, a hard budget, and exact connectivity of the
-mission set, which the baselines cannot promise. Its trust estimates are also
-the best of the table (Spearman 0.260, AUC 0.662). Whether the guarantee is
-worth 4 success points is a deployment decision, and we report it as one.
+Table~\ref{tab:pruners} compares the QUBO pruner against five baselines over
+identical scenarios (10 rovers, 20 cycles, 16 seeds, drifting reliability).
+Two of the baselines (\emph{threshold+repair}, \emph{top-$K$+repair}) are
+constraint-aware: they prune greedily, then run the same repair pass the
+simulator offers the QUBO, enforcing the same degree caps, the same budget,
+and exact connectivity of the mission set. Including them matters: a table
+of \emph{constraint-blind} baselines would overstate the guarantees story by
+comparing against opponents that never try to satisfy constraints. We also
+report the four metrics the pruning literature usually omits: offload rate
+(fraction of task slots actually assigned on the kept graph), per-cycle
+delivery-failure rate, and delivery-critical pruning precision and recall.
+Precision/recall are scored per cycle against a counterfactual ground truth:
+an edge is delivery-critical iff removing it from the full candidate graph
+strictly reduces the widest-path delivery bottleneck of at least one
+mission-critical node, so the labels are recomputed per cycle on the live
+candidate graph.
 
 \begin{table}[t]
 \centering
-\caption{Pruner comparison, 10 rovers, 20 cycles, 10 seeds, drifting
-reliability. Kept is the mean fraction of candidate edges retained. Trust
-metrics compare learned trust to hidden ground-truth reliability. Heuristic
-pruners cost microseconds of measured compute; the full-graph arm performs
-no pruning decision at all.}
+\caption{Pruner comparison, 10 rovers, 20 cycles, 16 seeds, drifting
+reliability, nominal fixed budget $K=15$ (see the audit note below).
+Kept is the mean fraction of candidate edges retained. Trust metrics compare
+learned trust to hidden ground-truth reliability. Violations are mean counts
+per 20-cycle run for degree / budget / connectivity. Repair variants pay a
+sub-millisecond repair pass (included in solve time).}
 \label{tab:pruners}
 \begin{tabular}{lrrrrr}
 \toprule
-pruner & success & solve (ms) & kept & Spearman & AUC \\
+ & success & offload & delivery-fail & solve (ms) & kept \\
 \midrule
-full graph & 36.8\% & --- & 100\% & 0.228 & 0.608 \\
-threshold & 38.2\% & $<0.01$ & 84\% & 0.218 & 0.592 \\
-top-$K$ & 38.2\% & $<0.01$ & 50\% & 0.205 & 0.624 \\
-QUBO (ours) & 33.8\% & 1216 & 55\% & 0.260 & 0.662 \\
+full graph & 36.0\% & 1.000 & 0.385 & --- & 100\% \\
+threshold & 37.0\% & 0.955 & 0.340 & $<0.01$ & 84\% \\
+top-$K$ & 36.4\% & 0.898 & 0.309 & $<0.01$ & 50\% \\
+threshold+repair & 34.3\% & 1.000 & 0.396 & 0.4 & 36\% \\
+top-$K$+repair & 34.8\% & 1.000 & 0.392 & 0.2 & 36\% \\
+QUBO (ours) & 32.2\% & 0.998 & 0.418 & 1435 & 54\% \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+\begin{tabular}{lrrrrr}
+\toprule
+ & Spearman & AUC & viol.\ deg & viol.\ bud & viol.\ conn \\
+\midrule
+full graph & 0.271 & 0.683 & 158.8 & 20.0 & 0.4 \\
+threshold & 0.254 & 0.624 & 131.7 & 20.0 & 2.3 \\
+top-$K$ & 0.251 & 0.683 & 53.6 & 20.0 & 10.0 \\
+threshold+repair & 0.249 & 0.640 & 4.7 & 20.0 & 0.4 \\
+top-$K$+repair & 0.242 & 0.638 & 3.4 & 19.9 & 0.4 \\
+QUBO (ours) & 0.272 & 0.669 & 0.0 & 19.9$^{\dagger}$ & 0.4 \\
 \bottomrule
 \end{tabular}
 \end{table}
+
+\paragraph{Audit note: the nominal budget never bound.}
+At the paper's nominal fixed budget $K=15$, the relaxation ladder of the
+production solver used the \emph{no-budget} relaxation in 319 of 320 QUBO
+cycles (Table~\ref{tab:pruners}, budget-violations column marked
+$^{\dagger}$): $K=15$ is below the cost of any connected subgraph at ten
+rovers, so the budget constraint was never satisfiable, the ladder fell
+through silently, and the QUBO row of our earlier tables was effectively
+unconstrained. This is exactly the failure mode the relaxation bookkeeping
+was built to expose, and it is an argument for always logging relaxation
+usage rather than asserting feasibility. All constraint-relevant conclusions
+below are therefore re-run at a \emph{binding, feasible} budget
+($K=0.75\times$ the full-graph cost), where the QUBO solves in full-constraint
+mode in 320 of 320 cycles with zero violations.
+
+Against the repaired baselines at the binding budget, the QUBO's raw-success
+deficit shrinks to $-4.1$ points against threshold+repair (paired bootstrap
+95\% CI $[-6.4, -1.9]$, permutation $p=0.004$) and $-4.2$ points against
+top-$K$+repair (CI $[-7.0, -1.5]$, $p=0.017$); against the constraint-blind
+threshold pruner it is $-5.7$ points ($p=0.002$). The earlier $-4.3$-point
+comparison against constraint-blind opponents thus overstated the gap by
+about two points, but the corrected gap is still statistically significant:
+the QUBO pruner is worse on raw mission success at this scale even against
+genuinely constrained baselines. What it buys is still guarantees: it is the
+only arm with zero violations at the binding budget (the repaired baselines
+leave a small residual: 1--3 degree and 0.3--0.9 connectivity violations per
+run), and it has the best trust Spearman (0.295 vs 0.251--0.271), though not
+the best AUC (0.681 vs 0.683 for the full and top-$K$ arms). The delivery
+metrics expose a different weakness: the QUBO's delivery-failure rate is
+4.4 points worse than threshold+repair (CI $[+1.4, +8.0]$) and 11.8 points
+worse than top-$K$ (CI $[+7.6, +16.0]$) --- its edge-local utility optimum
+misranks delivery-critical edges, which shows up as the lowest delivery
+critical recall in the table (0.67 vs 0.82--0.93) despite near-perfect
+offload. Throughout, mission success depends on the pruned topology by
+construction (delivery runs over the kept graph), so every pruner comparison
+here measures a real causal effect --- and the QUBO's headline loss is
+measured against opponents given the same constraints and the same repair
+pass, not against constraint-blind straw men.
+
+\subsection{Constraint pressure: where do the guarantees pay off?}
+\label{sec:pressure}
+
+The pruner table above tests one operating point where the constraints are
+hardly binding, so a skeptic can fairly ask: does the QUBO's feasibility
+guarantee ever convert into a success advantage? We therefore sweep the
+constraints across ten pressure levels on identical scenarios (10 rovers,
+20 cycles, 16 seeds per cell): budget as a fraction of the full-graph cost
+($\beta \in \{0.35, 0.5, 0.75, 1.0\}$), degree cap
+($D \in \{2, 3, 4\}$), and mission-critical roster size
+($|R| \in \{3, 5, 8\}$), one constraint tightened at a time.
+
+\begin{table}[t]
+\centering
+\caption{Constraint-pressure sweep: success by arm at each level, then the
+paired QUBO advantage against the best repaired baseline and its mean
+budget-violation count per run (20 cycles). Full table in the repository.}
+\label{tab:pressure}
+\begin{tabular}{llrrr}
+\toprule
+constraint & level & QUBO & best repaired & QUBO$-$best \\
+\midrule
+budget $\beta$ & 0.35 & 34.6\% & 34.7\% & $-0.1$pp, $p{=}1.00$ \\
+budget $\beta$ & 0.50 & 31.6\% & 35.2\% & $-3.7$pp, $p{=}0.033$ \\
+budget $\beta$ & 0.75 & 31.3\% & 35.4\% & $-4.1$pp, $p{=}0.004$ \\
+budget $\beta$ & 1.00 & 31.7\% & 35.3\% & $-3.7$pp, $p{=}0.020$ \\
+degree $D$ & 2 & 30.9\% & 34.3\% & $-3.3$pp, $p{=}0.15$ \\
+degree $D$ & 3 & 32.2\% & 34.3\% & $-2.1$pp, $p{=}0.10$ \\
+degree $D$ & 4 & 33.3\% & 34.8\% & $-0.9$pp, $p{=}0.52$ \\
+roster $|R|$ & 3 & 32.2\% & 34.3\% & $-2.1$pp, $p{=}0.10$ \\
+roster $|R|$ & 5 & 32.4\% & 35.1\% & $-2.7$pp, $p{=}0.058$ \\
+roster $|R|$ & 8 & 34.6\% & 37.8\% & $-3.2$pp, $p{=}0.020$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:pressure} gives the answer, and it is not the one the
+guarantee story predicts. At extreme budget pressure ($\beta=0.35$) the QUBO
+ties the best repaired baseline ($-0.1$pp, permutation $p=1.0$): there even
+the repaired baselines cannot fully satisfy the budget (2.9--3.0 residual
+violations per run, vs 5.4 for the ladder-aided QUBO, which the bookkeeping
+reports), and the gap closes to noise. But at every looser setting the QUBO
+\emph{loses} 2 to 4 points, and in the degree and roster sweeps the gap only
+narrows as the constraint is relaxed. There is no crossover: in this
+simulator, honoring the constraints exactly never pays for itself in
+delivery success, even when the constraints bind hard enough that the
+constraint-blind threshold pruner violates the budget in 20 of 20 cycles at
+$\beta=0.35$ (still 12.8 of 20 at $\beta=0.75$) and carries a mean
+excess-degree count of 165 per run at $D=2$ (vs 35 after repair). What remains true at every
+level is the guarantee itself: the QUBO records zero degree violations
+everywhere, its budget residuals occur only where the fixed budget is
+infeasible (infeasible-$K$ ladder relaxations, counted and reported by the
+bookkeeping, not silent breaks), and its 0.4 connectivity misses per run are
+shared by every arm including the full graph (cycles where delivery is
+impossible regardless of pruning). We conclude that the guarantees are worth paying for only when
+violating them is disqualifying --- regulatory, safety, or contractual ---
+rather than when success is the only currency, and this experiment is the
+honest boundary of our own pitch.
 
 \subsection{Assignment ablations with paired statistics}
 \label{sec:ablation}
@@ -520,9 +652,14 @@ solve interval $k$ & success & solves/cycle & amortized solve (ms) \\
 \subsection{Trust quality, training, and faults}
 \label{sec:training}
 
-Learned trust tracks hidden reliability at Spearman 0.21 to 0.26 and
-classifies above-median rovers at AUC 0.59 to 0.66 during operation; the
-QUBO-pruned arm achieves the best values. Training the readout on the
+Learned trust tracks hidden reliability at Spearman 0.24 to 0.30 and
+classifies above-median rovers at AUC 0.62 to 0.68 during operation, with
+the best Spearman usually belonging to the full-graph or QUBO-pruned arm.
+We flag a confound rather than hide it: these values are measured on
+outcomes observed under each pruner's own policy, so pruners face different
+observation streams and the comparison is selection-confounded; a common,
+unbiased outcome stream (as in the exploration-subset experiment below)
+would be needed for a clean ranking. Training the readout on the
 unbiased exploration subset (78 samples) does not improve held-out success
 over fixed weights (36.7\% vs 32.8\%, difference $-3.9$ points, CI
 $[-11.7,+11.7]$, $p=0.49$): with a selection-bias-free but small dataset, the
@@ -598,8 +735,10 @@ protects and does not beat a threshold pruner on raw success; the
 architecture is justified by guarantees and by scale, not by small-scale
 latency or accuracy.
 
-Limitations. Statistical power is limited (8 to 10 seeds per arm); the
-message-passing margin is not significant; the simulator is synthetic, with
+Limitations. Statistical power is limited (8 to 16 seeds per arm, depending
+on the experiment); the message-passing margin is not significant; the
+cross-pruner trust-quality comparison is selection-confounded because each
+pruner generates its own observation stream (Section~\ref{sec:eval}); the simulator is synthetic, with
 no wireless channel model, no hardware-in-the-loop, and no quantum hardware
 evaluation (the Q matrix is exported but untested on a QPU); the dense Q
 matrix bounds the practical fleet size at tens of rovers; the scaling study
@@ -619,10 +758,15 @@ optima on larger ones, while the direct MILP remains the better classical
 solver. End-to-end, trust-aware assignment significantly improves mission
 success over random and trust-only baselines in a simulator where success
 depends causally on the pruned topology. Equally important, the audit
-produced three negative results with real content: annealing samplers
-struggle on penalty-encoded constraints, MILP dominates the QUBO on classical
-hardware, and the pruner trades a few success points for hard guarantees at
-small scale. The codebase, harness, and all reported numbers are open and
+produced negative results with real content: annealing samplers struggle on
+penalty-encoded constraints, MILP dominates the QUBO on classical hardware,
+and --- corrected against constraint-aware repaired baselines and re-run at
+a provably binding budget --- the pruner trades 2 to 4 success points for
+hard guarantees at small scale, with no constraint-pressure level in our
+sweep where those guarantees convert into a success advantage. The audit
+even caught itself: relaxation bookkeeping revealed that the original
+comparison's fixed budget was infeasible and silently relaxed in 319 of 320
+solver cycles. The codebase, harness, and all reported numbers are open and
 reproducible.
 
 \begin{thebibliography}{12}

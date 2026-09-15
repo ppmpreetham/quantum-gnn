@@ -316,3 +316,69 @@ All items addressed; suite **459 passed, 0 failed** (incl. real `dwave-neal` bac
 - **Minors:** criticality now scales the probability, not the logit (L3);
   `reliability_drop` with `node=None` applies globally (L4); dead constant removed.
   Selection-bias footnote for readout training acknowledged (left as future work).
+
+---
+---
+
+# Review 3 — Constraint pressure, repaired baselines, and metric audit (2026-09-15)
+
+Motivated by an external review of the paper: (a) the "guarantees" defense of the
+QUBO pruner is never stress-tested because no experiment makes the constraints
+matter; (b) constraint-blind baselines make any violations table a straw man;
+(c) offload rate and pruning accuracy are missing metrics; (d) trust metrics are
+selection-confounded across pruners. Suite: battle_test simulator/GNN/solver
+sections re-run green (48 checks across G/I/K/L); full-suite run cut short only
+by the 10-min tool budget (heavy CBC sections unchanged).
+
+## Code changes
+
+- **`simulation.py`**
+  - New pruner arms `threshold_repair` and `topk_repair`: same greedy prune,
+    then the same feasibility repair the QUBO path gets (degree caps, budget,
+    mission-critical connectivity). Infeasible-budget repair falls back to a
+    minimum-cost spanning tree (Kruskal) with residual violations reported
+    honestly rather than collapsing to the empty graph.
+  - New metrics in `summary()`: `offload_rate` (assigned slots / task slots),
+    `delivery_fail_rate` (failed deliveries / total deliveries), and
+    delivery-critical pruning precision/recall per cycle. Ground truth is a
+    per-cycle counterfactual: an edge is delivery-critical iff removing it
+    from the full candidate graph strictly reduces the widest-path delivery
+    bottleneck of any mission-critical node.
+  - New knobs: `degree_cap` (was hardcoded 3) and `budget_factor` (budget as a
+    fraction of full-graph cost, so pressure is comparable across cycles).
+  - Repair time now included in reported solve time.
+- **`constraint_pressure.py`** (new): budget (β ∈ {0.35,0.5,0.75,1.0}),
+  degree (D ∈ {2,3,4}), roster (|R| ∈ {3,5,8}) sweeps × 6 arms × 16 seeds ×
+  20 cycles, resumable via `sweep_*.jsonl`; paired bootstrap CIs and
+  permutation p-values per cell.
+- **`benchmark_full.py`** (new): the paper's Table-2 benchmark at 16 seeds with
+  all 6 arms, sequential for clean timings, resumable via `benchmark.jsonl`;
+  supports both the nominal fixed K=15 and binding budget_factor modes.
+- **`analyze_results.py`** (new): extracts paper-ready numbers from the JSONLs.
+
+## Findings (all in the paper now)
+
+1. **Audit caught the audit:** at the nominal fixed budget K=15 (10 rovers),
+   the budget is below the cost of any connected subgraph — the QUBO's
+   relaxation ladder silently used no-budget mode in 319/320 cycles. The old
+   Table 2's QUBO row was effectively unconstrained. All constraint-relevant
+   comparisons re-run at a binding, feasible budget (K = 0.75× full-graph
+   cost; 320/320 full-constraint mode, zero violations).
+2. **No success crossover:** across ten pressure levels the QUBO never beats
+   the best repaired baseline on success. It ties at extreme budget pressure
+   (β=0.35: −0.1pp, p=1.0) and loses 2–4pp elsewhere (significant at
+   β ∈ {0.5, 0.75, 1.0} and roster 8). The honest value proposition is the
+   guarantee itself (zero degree violations at every level; constraint-blind
+   threshold violates budget 20/20 cycles at β=0.35), not success.
+3. **Baseline fairness fixed:** vs constraint-aware repaired baselines the
+   QUBO's success deficit is −4.1/−4.2pp (p=0.004/0.017) — the earlier
+   −4.3pp gap against blind pruners overstated the gap by ~2pp.
+4. **New metrics:** QUBO offload ≈100% vs 89.8% for top-K (which strands
+   tasks by disconnecting mission nodes), but delivery-failure rate 4.4pp
+   worse than threshold+repair (CI [+1.4,+8.0]) and 11.8pp worse than top-K —
+   the soft objective misranks delivery-critical edges (recall 0.67 vs
+   0.82–0.93).
+5. **Trust-quality claim softened:** at 16 seeds the QUBO arm has the best
+   Spearman (0.295 at binding budget) but not the best AUC (0.681 vs 0.683);
+   and all cross-pruner trust comparisons are selection-confounded (each
+   pruner generates its own observation stream) — flagged in the paper.

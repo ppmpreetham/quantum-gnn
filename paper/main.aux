@@ -1,0 +1,80 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\citation{kipf2017}
+\citation{graphsage2017}
+\citation{glover2019}
+\citation{lucas2014}
+\citation{kirkpatrick1983}
+\citation{ocean}
+\citation{cbc}
+\citation{flowbook}
+\citation{mrtasurvey}
+\citation{trustsurvey}
+\citation{auer2002}
+\citation{sparsification}
+\citation{bonomi2012}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Related Work}{2}{section.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {3}System Model}{2}{section.3}\protected@file@percent }
+\newlabel{sec:model}{{3}{2}{System Model}{section.3}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces Three-tier deployment. Telemetry flows up; task assignments flow down. Expensive solving and training are cloud or fog functions depending on the cycle budget.}}{3}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:arch}{{1}{3}{Three-tier deployment. Telemetry flows up; task assignments flow down. Expensive solving and training are cloud or fog functions depending on the cycle budget}{figure.caption.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces One pipeline cycle. Trust from the previous cycle feeds both the QUBO edge features and the GNN node features, closing the loop without same-cycle circularity.}}{3}{figure.caption.2}\protected@file@percent }
+\newlabel{fig:pipeline}{{2}{3}{One pipeline cycle. Trust from the previous cycle feeds both the QUBO edge features and the GNN node features, closing the loop without same-cycle circularity}{figure.caption.2}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Constrained QUBO Formulation}{4}{section.4}\protected@file@percent }
+\newlabel{sec:qubo}{{4}{4}{Constrained QUBO Formulation}{section.4}{}}
+\newlabel{eq:qubo}{{1}{4}{Constrained QUBO Formulation}{equation.4.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Solver Analysis: The Penalty-Barrier Problem}{4}{section.5}\protected@file@percent }
+\newlabel{sec:solvers}{{5}{4}{Solver Analysis: The Penalty-Barrier Problem}{section.5}{}}
+\citation{cbc}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Exact-solve rate of serious QUBO solvers on the actual Q matrix of 25 instances with enumerated ground truth. Simulated quantum annealing (OpenJij), local simulated annealing, D-Wave's \texttt  {neal}, and tabu search all miss at least a third of instances; the exact linearized solve (CBC) defines the optimum.}}{5}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:solvers}{{3}{5}{Exact-solve rate of serious QUBO solvers on the actual Q matrix of 25 instances with enumerated ground truth. Simulated quantum annealing (OpenJij), local simulated annealing, D-Wave's \code {neal}, and tabu search all miss at least a third of instances; the exact linearized solve (CBC) defines the optimum}{figure.caption.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}The strong classical baseline: direct MILP}{5}{subsection.5.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {6}Trust-Aware GNN Inference}{5}{section.6}\protected@file@percent }
+\newlabel{sec:gnn}{{6}{5}{Trust-Aware GNN Inference}{section.6}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Physical testbed sketch. Four rovers on a flat surface with per-link quality arcs; the degraded link is a pruning candidate.}}{6}{figure.caption.4}\protected@file@percent }
+\newlabel{fig:testbed}{{4}{6}{Physical testbed sketch. Four rovers on a flat surface with per-link quality arcs; the degraded link is a pruning candidate}{figure.caption.4}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {7}Experimental Evaluation}{6}{section.7}\protected@file@percent }
+\newlabel{sec:eval}{{7}{6}{Experimental Evaluation}{section.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.1}Pruning baselines and the honest pruner table}{6}{subsection.7.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Audit note: the nominal budget never bound.}{6}{section*.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces Pruner comparison, 10 rovers, 20 cycles, 16 seeds, drifting reliability, nominal fixed budget $K=15$ (see the audit note below). Kept is the mean fraction of candidate edges retained. Trust metrics compare learned trust to hidden ground-truth reliability. Violations are mean counts per 20-cycle run for degree / budget / connectivity. Repair variants pay a sub-millisecond repair pass (included in solve time).}}{7}{table.caption.5}\protected@file@percent }
+\newlabel{tab:pruners}{{1}{7}{Pruner comparison, 10 rovers, 20 cycles, 16 seeds, drifting reliability, nominal fixed budget $K=15$ (see the audit note below). Kept is the mean fraction of candidate edges retained. Trust metrics compare learned trust to hidden ground-truth reliability. Violations are mean counts per 20-cycle run for degree / budget / connectivity. Repair variants pay a sub-millisecond repair pass (included in solve time)}{table.caption.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.2}Constraint pressure: where do the guarantees pay off?}{7}{subsection.7.2}\protected@file@percent }
+\newlabel{sec:pressure}{{7.2}{7}{Constraint pressure: where do the guarantees pay off?}{subsection.7.2}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces Constraint-pressure sweep: success by arm at each level, then the paired QUBO advantage against the best repaired baseline and its mean budget-violation count per run (20 cycles). Full table in the repository.}}{8}{table.caption.7}\protected@file@percent }
+\newlabel{tab:pressure}{{2}{8}{Constraint-pressure sweep: success by arm at each level, then the paired QUBO advantage against the best repaired baseline and its mean budget-violation count per run (20 cycles). Full table in the repository}{table.caption.7}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.3}Assignment ablations with paired statistics}{8}{subsection.7.3}\protected@file@percent }
+\newlabel{sec:ablation}{{7.3}{8}{Assignment ablations with paired statistics}{subsection.7.3}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces Assignment ablation, 10 rovers, 20 cycles, 8 seeds. Differences are paired per seed; CI is a 95\% paired bootstrap interval and $p$ a sign-flip permutation test.}}{9}{table.caption.8}\protected@file@percent }
+\newlabel{tab:ablation}{{3}{9}{Assignment ablation, 10 rovers, 20 cycles, 8 seeds. Differences are paired per seed; CI is a 95\% paired bootstrap interval and $p$ a sign-flip permutation test}{table.caption.8}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces Cloud amortization, 10 rovers, 20 cycles, 6 seeds. Solve time is amortized over cycles; the stale decision is intersected with the live graph.}}{9}{table.caption.9}\protected@file@percent }
+\newlabel{tab:staleness}{{4}{9}{Cloud amortization, 10 rovers, 20 cycles, 6 seeds. Solve time is amortized over cycles; the stale decision is intersected with the live graph}{table.caption.9}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.4}Staleness and cloud amortization}{9}{subsection.7.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.5}Trust quality, training, and faults}{9}{subsection.7.5}\protected@file@percent }
+\newlabel{sec:training}{{7.5}{9}{Trust quality, training, and faults}{subsection.7.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {7.6}Sensitivity}{9}{subsection.7.6}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces Scaling on range-limited graphs. Connectivity is enforced only for $n\le 20$ (marked $^\dagger $); we do not present one curve across the transition because the problem changes there. $E$ is soft energy (lower is better). MILP values are exact optima from CBC.}}{10}{table.caption.10}\protected@file@percent }
+\newlabel{tab:scaling}{{5}{10}{Scaling on range-limited graphs. Connectivity is enforced only for $n\le 20$ (marked $^\dagger $); we do not present one curve across the transition because the problem changes there. $E$ is soft energy (lower is better). MILP values are exact optima from CBC}{table.caption.10}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces Per-decision wall-clock. The QUBO solve dominates by five orders of magnitude, which is exactly why solving belongs in the cloud tier.}}{10}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:latency}{{5}{10}{Per-decision wall-clock. The QUBO solve dominates by five orders of magnitude, which is exactly why solving belongs in the cloud tier}{figure.caption.11}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {8}Discussion and Limitations}{10}{section.8}\protected@file@percent }
+\newlabel{sec:discussion}{{8}{10}{Discussion and Limitations}{section.8}{}}
+\bibcite{kipf2017}{1}
+\bibcite{graphsage2017}{2}
+\bibcite{glover2019}{3}
+\bibcite{lucas2014}{4}
+\bibcite{kirkpatrick1983}{5}
+\bibcite{ocean}{6}
+\bibcite{cbc}{7}
+\bibcite{flowbook}{8}
+\bibcite{mrtasurvey}{9}
+\bibcite{auer2002}{10}
+\bibcite{sparsification}{11}
+\bibcite{bonomi2012}{12}
+\bibcite{trustsurvey}{13}
+\@writefile{toc}{\contentsline {section}{\numberline {9}Conclusion}{11}{section.9}\protected@file@percent }
+\gdef \@abspage@last{11}
