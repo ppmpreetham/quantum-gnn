@@ -22,6 +22,46 @@ from typing import Dict, Iterable, Optional, Sequence, Tuple
 from main import Edge, EdgeFeatures, Node, QUBOConfig, canonical_edge
 
 
+def solve_qubo_exact(Q, constant: float = 0.0, time_limit: int = 300) -> float:
+    """
+    Exact minimum of E(z) = z^T Q z + constant over binary z, by standard
+    linearization (one auxiliary variable per nonzero quadratic term),
+    solved with CBC. This is the exact QUBO solver reference: it works on
+    the actual Q matrix, not on the original constrained problem.
+    """
+    import pulp
+    import numpy as np
+
+    Q = np.asarray(Q, dtype=float)
+    n = Q.shape[0]
+    prob = pulp.LpProblem("qubo_exact", pulp.LpMinimize)
+    x = [pulp.LpVariable(f"x_{i}", cat="Binary") for i in range(n)]
+
+    obj = [float(constant)]
+    for i in range(n):
+        if Q[i, i] != 0.0:
+            obj.append(float(Q[i, i]) * x[i])
+    for i in range(n):
+        for j in range(i + 1, n):
+            qij = 2.0 * float(Q[i, j])  # z^T Q z counts both (i,j) and (j,i)
+            if qij == 0.0:
+                continue
+            z = pulp.LpVariable(f"z_{i}_{j}", cat="Binary")
+            # z = x_i AND x_j
+            prob += z <= x[i]
+            prob += z <= x[j]
+            prob += z >= x[i] + x[j] - 1
+            obj.append(qij * z)
+    prob += pulp.lpSum(obj)
+
+    status = prob.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit))
+    if pulp.LpStatus[status] != "Optimal":
+        raise ValueError(
+            f"exact QUBO solve did not prove optimality: {pulp.LpStatus[status]}"
+        )
+    return float(pulp.value(prob.objective))
+
+
 def solve_milp(
     nodes: Sequence[Node],
     edges: Sequence[Edge],

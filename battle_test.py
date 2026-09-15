@@ -729,8 +729,32 @@ def test_scenarios() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_sa_quality_report() -> None:
-    print("H. SA quality vs settings (diagnostic)")
+def _dimod_qubo(Q: np.ndarray) -> dict:
+    """dimod convention: E = sum_i Qii xi + sum_{i<j} Qij xi xj."""
+    n = Q.shape[0]
+    Qd = {}
+    for a in range(n):
+        if Q[a, a] != 0.0:
+            Qd[(a, a)] = float(Q[a, a])
+        for bb in range(a + 1, n):
+            if Q[a, bb] != 0.0:
+                Qd[(a, bb)] = float(2.0 * Q[a, bb])
+    return Qd
+
+
+def _energy_of_sample(b: EdgeSelectionQUBO, z: np.ndarray, warm: np.ndarray) -> float:
+    try:
+        z = b.build_feasible_solution(set(b.selected_edges(z)))
+        return b.energy(z)
+    except Exception:  # noqa: BLE001
+        return b.energy(warm)
+
+
+def test_qubo_solvers() -> None:
+    """The main solver benchmark: the actual Q matrix against serious QUBO
+    solvers, with exact ground truth from both enumeration and an exact
+    linearized-QUBO solve (CBC)."""
+    print("H. QUBO solver benchmark (on the actual Q matrix)")
     rng = np.random.default_rng(4)
     instances = []
     trial = 0
@@ -744,70 +768,89 @@ def test_sa_quality_report() -> None:
         e_opt = exact_edge_enumeration(b)
         instances.append((b, e_opt, inst["warm_edges"]))
     print(f"  {len(instances)} exactly-solved instances")
-    print("  QUBO bit-sampler on Q (neal-equivalent backend; diagnostic):")
-    for label, kw in [
-        ("fast  (restarts=5,  cool=0.90)", dict(restarts=5, cooling_rate=0.90)),
-        ("slow  (restarts=20, cool=0.98)", dict(restarts=20, cooling_rate=0.98)),
-        ("pair-moves (p=0.3)", dict(restarts=20, cooling_rate=0.98,
-                                    pair_probability=0.3)),
-    ]:
-        gaps = []
-        for i, (b, e_opt, warm_edges) in enumerate(instances):
-            Q, c, _ = b.get_qubo()
-            warm = b.build_feasible_solution(warm_edges)
-            sa = SimulatedAnnealing(Q, c, seed=i, sweeps_per_temperature=2,
-                                    initial_states=[warm], **kw)
-            z, _ = sa.run()
-            try:
-                z = b.build_feasible_solution(set(b.selected_edges(z)))
-            except Exception:  # noqa: BLE001
-                z = warm
-            gaps.append(norm_gap(b.energy(z), e_opt))
-        gaps = np.array(gaps)
-        print(f"  {label}: exact={np.mean(gaps < 1e-9)*100:4.0f}%  "
-              f"mean_gap={gaps.mean():.4f}  p90={np.percentile(gaps, 90):.4f}")
 
-    # projected graph-level annealing: must be near-exact
+    from milp_baseline import solve_qubo_exact
+
+    def run_local(b, warm_edges, seed, **kw):
+        Q, c, _ = b.get_qubo()
+        warm = b.build_feasible_solution(warm_edges)
+        sa = SimulatedAnnealing(Q, c, seed=seed, sweeps_per_temperature=2,
+                                initial_states=[warm], **kw)
+        z, _ = sa.run()
+        return _energy_of_sample(b, z, warm)
+
+    def run_dimod(sampler, b, warm_edges, s, extra_kw=None):
+        Q, c, _ = b.get_qubo()
+        warm = b.build_feasible_solution(warm_edges)
+        kw = {"num_reads": 100}
+        kw.update(extra_kw or {})
+        sample = sampler.sample_qubo(_dimod_qubo(Q), **kw).first.sample
+        z = np.array([sample[k] for k in range(Q.shape[0])], dtype=float)
+        return _energy_of_sample(b, z, warm)
+
+    solvers = [
+        ("bit-SA (local)", lambda b, w, s: run_local(
+            b, w, s, restarts=20, cooling_rate=0.98)),
+    ]
+    if HAVE_NEAL:
+        solvers.append(("neal SA", lambda b, w, s: run_dimod(
+            neal.SimulatedAnnealingSampler(), b, w, s, {"seed": s})))
+    try:
+        import tabu
+        solvers.append(("tabu search", lambda b, w, s: run_dimod(
+            tabu.TabuSampler(), b, w, s,
+            {"num_reads": 10, "timeout": 200, "seed": s})))
+    except ImportError:
+        pass
+    try:
+        import openjij as oj
+        solvers.append(("SQA (openjij)", lambda b, w, s: run_dimod(
+            oj.SQASampler(), b, w, s, {"num_reads": 25})))
+    except ImportError:
+        pass
+
+    # exact ground truth: enumeration AND exact linearized QUBO must agree
+    # (small Q only; the linearization grows quadratically with var count)
+    checked = 0
+    for i, (b, e_opt, _) in enumerate(instances):
+        if checked >= 5:
+            break
+        Q, c, _ = b.get_qubo()
+        if Q.shape[0] > 60:
+            continue
+        try:
+            e_exact = solve_qubo_exact(Q, c, time_limit=120)
+        except ValueError:
+            continue
+        checked += 1
+        check(f"H.exact-agree {i}", abs(e_exact - e_opt) < 1e-7,
+              f"linearized exact {e_exact} != enumeration {e_opt}")
+
+    for label, fn in solvers:
+        gaps, times = [], []
+        for i, (b, e_opt, warm_edges) in enumerate(instances):
+            t0 = time.time()
+            e = fn(b, warm_edges, i)
+            times.append(time.time() - t0)
+            gaps.append(norm_gap(e, e_opt))
+        g = np.array(gaps)
+        print(f"  {label:16s}: exact={np.mean(g < 1e-9)*100:4.0f}%  "
+              f"mean_gap={g.mean():.4f}  p90={np.percentile(g, 90):.4f}  "
+              f"time={np.mean(times)*1e3:7.1f} ms")
+    print(f"  {'exact (CBC)':16s}: exact=100%  (linearized QUBO, ground truth)")
+
+    # projected annealer: production solver, kept OUT of the scientific
+    # comparison; reported only as an engineering note with an exactness floor
     gaps = []
     for i, (b, e_opt, warm_edges) in enumerate(instances):
         sa = ProjectedEdgeAnnealing(b, initial_edge_sets=[warm_edges],
                                     restarts=3, seed=i)
         gaps.append(norm_gap(sa.run().energy, e_opt))
     gaps = np.array(gaps)
-    print(f"  projected annealing: exact={np.mean(gaps < 1e-9)*100:4.0f}%  "
-          f"mean_gap={gaps.mean():.4f}  p90={np.percentile(gaps, 90):.4f}")
+    print(f"  [production] projected annealing: exact="
+          f"{np.mean(gaps < 1e-9)*100:.0f}% (not part of the comparison)")
     check("H.projected", np.mean(gaps < 1e-9) >= 0.9,
           f"projected SA exact rate too low: {np.mean(gaps < 1e-9)*100:.0f}%")
-
-    # real QUBO backend (dwave-neal) on the same Q matrices, when installed
-    if HAVE_NEAL:
-        sampler = neal.SimulatedAnnealingSampler()
-        gaps = []
-        for i, (b, e_opt, warm_edges) in enumerate(instances):
-            Q, c, names = b.get_qubo()
-            n = Q.shape[0]
-            # dimod convention: E = sum_i Qii xi + sum_{i<j} Qij xi xj
-            Qd = {}
-            for a in range(n):
-                if Q[a, a] != 0.0:
-                    Qd[(a, a)] = float(Q[a, a])
-                for bb in range(a + 1, n):
-                    if Q[a, bb] != 0.0:
-                        Qd[(a, bb)] = float(2.0 * Q[a, bb])
-            sample = sampler.sample_qubo(Qd, num_reads=100, seed=i).first.sample
-            z = np.array([sample[k] for k in range(n)], dtype=float)
-            try:
-                z = b.build_feasible_solution(set(b.selected_edges(z)))
-                e = b.energy(z)
-            except ValueError:
-                e = b.energy(b.build_feasible_solution(warm_edges))
-            gaps.append(norm_gap(e, e_opt))
-        gaps = np.array(gaps)
-        print(f"  dwave-neal on Q:     exact={np.mean(gaps < 1e-9)*100:4.0f}%  "
-              f"mean_gap={gaps.mean():.4f}  p90={np.percentile(gaps, 90):.4f}")
-    else:
-        print("  dwave-neal not installed; local bit-SA above is the "
-              "same algorithm class and stands in as the Q-sampler baseline")
 
     # do random restarts alone (no warm start) reach feasibility?
     infeas = 0
@@ -1360,7 +1403,7 @@ if __name__ == "__main__":
     test_edge_cases()
     test_scaling()
     test_scenarios()
-    test_sa_quality_report()
+    test_qubo_solvers()
     test_gnn()
     test_simulation_harness()
     test_review2_regressions()

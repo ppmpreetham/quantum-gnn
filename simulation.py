@@ -418,11 +418,17 @@ class RoverSimulation:
         if self.pruner == "threshold":
             kept = [e for e in edges
                     if edge_utility(features[e]) >= self.threshold_tau]
-            return kept, 0.0, 0.0
+            # honest cost: the heuristic itself, measured (microseconds)
+            t_ms = _timed_median_ms(lambda: [
+                e for e in edges
+                if edge_utility(features[e]) >= self.threshold_tau])
+            return kept, 0.0, t_ms / 1e3
         if self.pruner == "topk":
             k = max(1, int(round(self.topk_fraction * len(edges))))
             ranked = sorted(edges, key=lambda e: -edge_utility(features[e]))
-            return sorted(ranked[:k]), 0.0, 0.0
+            t_ms = _timed_median_ms(lambda: sorted(
+                edges, key=lambda e: -edge_utility(features[e])))
+            return sorted(ranked[:k]), 0.0, t_ms / 1e3
 
         # cloud amortization: solve every solve_interval cycles, reuse the
         # stale decision (intersected with the live graph) in between

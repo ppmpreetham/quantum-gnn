@@ -35,12 +35,13 @@ GNN assigns tasks on the pruned graph, with trust updated online from
 observed outcomes. Rather than only proposing the formulation, we audit it.
 First, we verify the QUBO encoding against an independent re-derivation and
 exhaustive enumeration. Second, we show that penalty-encoded constrained
-QUBOs are difficult for annealing-style samplers: local bit-flip simulated
-annealing, a two-bit-move variant, and the \code{dwave-neal} sampler reach
-the exact optimum in only 52 to 60\% of verifiable instances, while a
-feasibility-projected annealer that moves over valid edge sets solves 100\%
-of them, and 95\% against exact MILP optima on larger instances (mean true
-optimality gap below $10^{-3}$). Third, we show the uncomfortable
+QUBOs are difficult for annealing-style samplers: on the actual Q matrix,
+four serious solvers (local simulated annealing, D-Wave's \code{neal},
+tabu search, and simulated quantum annealing) reach the exact optimum in
+only 48 to 64\% of verifiable instances, while the exact linearized solve
+and, as an engineering note, our feasibility-projected production annealer
+solve 100\% of them (95\% against exact MILP optima on larger instances,
+mean true gap below $10^{-3}$). Third, we show the uncomfortable
 counterpoint: the same problem solved directly as a mixed-integer program by
 CBC is exact and roughly 100 times faster than our annealer, so on classical
 hardware the QUBO's role is as a hardware-target encoding, not as the
@@ -267,33 +268,39 @@ report it as such.
 \label{sec:solvers}
 
 A QUBO like Eq.~\eqref{eq:qubo} is meant to be sampled by an annealer. We
-found that this fails in a specific, quantifiable way, and we are careful to
-scope the claim to what we measured. From any feasible state, every
-single-bit flip either breaks a constraint (penalty at least $100$) or
-changes the soft objective by at most about $1.2$. At temperatures useful for
-the soft landscape, the acceptance probability of a constraint-breaking move
-is effectively zero. We therefore expected single-bit simulated annealing to
-be unable to move between feasible regions, and it cannot: random restarts
-returned infeasible states in 19 of 25 test instances. The natural objection
-is that this is an artifact of the move set, so we also tested a two-bit-move
-variant and a production sampler (\code{dwave-neal}, 100 reads). Both improve
-matters only marginally (Fig.~\ref{fig:solvers}). Our claim is therefore
-narrow: \emph{on this penalty-encoded landscape, local QUBO samplers of the
-annealing family perform poorly}, not that all QUBO methods must fail.
+benchmarked the actual Q matrix of our instances against four serious
+annealing-family solvers: local simulated annealing, D-Wave's \code{neal},
+tabu search, and simulated quantum annealing (OpenJij), with the optimum
+defined by an exact linearized-QUBO solve (CBC) and cross-checked against
+exhaustive enumeration. From any feasible state, every single-bit flip
+either breaks a constraint (penalty at least $100$) or changes the soft
+objective by at most about $1.2$, so at temperatures useful for the soft
+landscape, constraint-breaking moves are effectively never accepted; random
+restarts of bit-level annealing returned infeasible states in 19 of 25 test
+instances. Fig.~\ref{fig:solvers} shows that the difficulty is not specific
+to one implementation or move set: all four samplers miss at least a third
+of the instances. Our claim is deliberately narrow: \emph{on this
+penalty-encoded landscape, annealing-family QUBO samplers are unreliable},
+not that all QUBO methods must fail; the exact solver handles the same
+matrices without difficulty.
 
-Our solver, \emph{projected edge annealing}, moves in the space of feasible
-edge subsets instead of the space of bit strings. A move toggles one optional
-edge or swaps two edges, and the candidate is projected back to feasibility
-by an exact repair procedure that recomputes slacks and a spanning-tree flow;
-unprojectable moves are rejected. The objective is still exactly $H(z)$,
-restricted to the feasible manifold where the penalty terms vanish; the QUBO
-remains the specification, and the Q matrix is still exported for hardware
-backends. A deterministic polish alternates single-toggle and pairwise-swap
-passes to a local fixpoint, and random restarts are seeded with
-degree-cap-aware random spanning trees, because greedy edge-by-edge growth
-can never cross the infeasible prefix states that connectivity constraints
-create. Each solve uses about $2.4\times10^4$ energy evaluations and about
-2.1\,s on our benchmark instances.
+For the production pipeline we therefore do not rely on Q-matrix sampling.
+Our production solver, \emph{projected edge annealing}, moves in the space
+of feasible edge subsets instead of the space of bit strings: a move toggles
+one optional edge or swaps two edges, and the candidate is projected back to
+feasibility by an exact repair procedure that recomputes slacks and a
+spanning-tree flow; unprojectable moves are rejected. The objective is
+still exactly $H(z)$, restricted to the feasible manifold where penalty
+terms vanish; the QUBO remains the specification, and the Q matrix is still
+exported for hardware backends. A deterministic polish alternates
+single-toggle and pairwise-swap passes to a local fixpoint, and random
+restarts are seeded with degree-cap-aware random spanning trees, because
+greedy edge-by-edge growth can never cross the infeasible prefix states
+that connectivity constraints create. We deliberately exclude this solver
+from the scientific comparison above, since its move set is richer than the
+samplers'; we report only that it reaches 100\% exact on the same instances
+(about $2.4\times10^4$ energy evaluations and 2.1\,s per solve), as an
+engineering note rather than a claim about QUBO solving.
 
 \begin{figure}[t]
 \centering
@@ -302,18 +309,20 @@ create. Each solve uses about $2.4\times10^4$ energy evaluations and about
   ybar, bar width=13pt,
   width=0.8\columnwidth, height=5.2cm,
   ylabel={exact-solve rate (\%)},
-  ymin=0, ymax=110,
-  symbolic x coords={bit-SA (fast), bit-SA (slow), bit-SA (2-bit), dwave-neal, projected},
+  ymin=0, ymax=112,
+  symbolic x coords={SQA, bit-SA, neal SA, tabu, exact (CBC)},
   xtick=data, x tick label style={font=\small, align=center},
   nodes near coords, nodes near coords style={font=\small},
   every axis plot/.append style={fill=blue!35, draw=blue!60},
 ]
-\addplot coordinates {(bit-SA (fast),52) (bit-SA (slow),56) (bit-SA (2-bit),60) (dwave-neal,60) (projected,100)};
+\addplot coordinates {(SQA,48) (bit-SA,56) (neal SA,60) (tabu,64) (exact (CBC),100)};
 \end{axis}
 \end{tikzpicture}
-\caption{Exact-solve rate on 25 instances with exhaustively enumerated ground
-truth. The 2-bit variant and \code{dwave-neal} sample the same Q matrix with
-richer effort and still miss two in five instances.}
+\caption{Exact-solve rate of serious QUBO solvers on the actual Q matrix of
+25 instances with enumerated ground truth. Simulated quantum annealing
+(OpenJij), local simulated annealing, D-Wave's \code{neal}, and tabu search
+all miss at least a third of instances; the exact linearized solve (CBC)
+defines the optimum.}
 \label{fig:solvers}
 \end{figure}
 
@@ -391,9 +400,8 @@ that a random-policy, selection-bias-free subset exists (Section~\ref{sec:traini
   \node[font=\small\itshape] at (4.5,-1.05) {dashed circles: communication range};
 \end{tikzpicture}%
 }
-\caption{Physical testbed sketch (fiziko rendering when available, TikZ
-fallback otherwise). Four rovers on a flat surface with per-link quality
-arcs; the degraded link is a pruning candidate.}
+\caption{Physical testbed sketch. Four rovers on a flat surface with
+per-link quality arcs; the degraded link is a pruning candidate.}
 \label{fig:testbed}
 \end{figure}
 
@@ -427,15 +435,17 @@ worth 4 success points is a deployment decision, and we report it as one.
 \centering
 \caption{Pruner comparison, 10 rovers, 20 cycles, 10 seeds, drifting
 reliability. Kept is the mean fraction of candidate edges retained. Trust
-metrics compare learned trust to hidden ground-truth reliability.}
+metrics compare learned trust to hidden ground-truth reliability. Heuristic
+pruners cost microseconds of measured compute; the full-graph arm performs
+no pruning decision at all.}
 \label{tab:pruners}
 \begin{tabular}{lrrrrr}
 \toprule
 pruner & success & solve (ms) & kept & Spearman & AUC \\
 \midrule
-full graph & 36.8\% & 0 & 100\% & 0.228 & 0.608 \\
-threshold & 38.2\% & 0 & 84\% & 0.218 & 0.592 \\
-top-$K$ & 38.2\% & 0 & 50\% & 0.205 & 0.624 \\
+full graph & 36.8\% & --- & 100\% & 0.228 & 0.608 \\
+threshold & 38.2\% & $<0.01$ & 84\% & 0.218 & 0.592 \\
+top-$K$ & 38.2\% & $<0.01$ & 50\% & 0.205 & 0.624 \\
 QUBO (ours) & 33.8\% & 1216 & 55\% & 0.260 & 0.662 \\
 \bottomrule
 \end{tabular}
