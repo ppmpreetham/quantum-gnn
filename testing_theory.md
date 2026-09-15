@@ -594,3 +594,364 @@ And the one-sentence summary of the whole suite:
 > three independent ways; large problems are graded against certified
 > bounds; the solver's honest weaknesses are measured, printed, and
 > published instead of hidden.**
+
+---
+
+# Every Metric, Explained: what each number means, how it's computed, and how it can fool you
+
+Every number the project reports comes from `simulation.py`'s `summary()` plus
+a small statistics toolkit. Here is each one — the kid version, the exact
+formula (as implemented), why it exists, and the honest ways it can mislead.
+
+---
+
+## Group 1 — The outcome metrics: "did the fleet actually work?"
+
+### 1.1 `success_rate` — task success (the headline)
+
+**Kid version.** Every cycle the fleet gets 3 tasks. A task counts as a
+success only if **both** of these happen: the assigned rover actually does
+the work, **and** the result makes it back to base over the links you kept.
+Sum up over the whole episode.
+
+**Exact formula.**
+```
+success_rate = (Σ over cycles: successful tasks) / (cycles × tasks_per_cycle)
+```
+where a task succeeds iff `exec_ok AND delivered`, and "delivered" is a coin
+flip with probability = the rover's **widest-path bottleneck to base on the
+kept graph** (the weakest link on the best path — the base itself always
+"delivers", it's already home).
+
+**Why it exists.** It's the thing the whole system is *for*. Because delivery
+runs over the pruned graph, this metric is **causal**: prune a critical link
+and the coin flips get worse. You cannot fake it by looking good on paper.
+
+**How it can fool you.** It's a *ratio of ratios*: 60% success at 3
+tasks/cycle means 36 successes vs 40 failures-ish over 20 cycles — small
+numbers, which is why every comparison uses paired per-seed statistics rather
+than eyeballing two percentages.
+
+### 1.2 `offload_rate` — the "stranded tasks" detector
+
+**Kid version.** Out of all the task slots the fleet was offered, how many
+did we actually *give to someone*? If your pruning disconnected the only
+qualified rover, the task never launches — that's a stranded task, and this
+counts it.
+
+**Exact formula.**
+```
+offload_rate = (Σ over cycles: tasks actually assigned)
+               / (Σ over cycles: task slots offered)
+```
+
+**Why it exists.** Without it, an aggressive pruner could look great on
+delivery *because it only attempts the easy tasks*. Top-K's offload of
+**89.8%** (vs QUBO's 99.8%) is exactly this disease: it strands 10.2% of
+tasks by disconnecting their would-be rovers.
+
+**How it can fool you.** Offload and delivery quality trade off against each
+other. A do-nothing arm offloads 100% and delivers poorly; a hyper-aggressive
+arm delivers well on the few tasks it attempts. Never quote one without the
+other.
+
+### 1.3 `delivery_fail_rate` — the "weak path" detector
+
+**Kid version.** Of all the delivery attempts that *happened*, what fraction
+failed to get the result home? This is the mirror image of offload: it
+punishes keeping links that are technically connected but too weak.
+
+**Exact formula.**
+```
+delivery_fail_rate = failed deliveries / (successful + failed deliveries)
+```
+counted over all assigned tasks of the episode (root deliveries excluded —
+they can't fail).
+
+**Why it exists.** Two pruners can both offload 100% and have wildly
+different success: one keeps strong paths, one keeps pretty-but-fragile
+paths. The QUBO's worst-in-table 42.7% (vs top-K's 30.9%) is the signature
+of its soft objective misranking delivery-critical edges.
+
+**How it can fool you.** It conditions on *attempted* deliveries, so a pruner
+that strands tasks escapes its worst failures. That's precisely why 1.2 and
+1.3 must be read as a pair.
+
+---
+
+## Group 2 — The pruning-quality metrics: "did you keep the right links?"
+
+### 2.1 The ground truth first: a "delivery-critical" edge
+
+**Kid version.** Before we can grade the pruner like a student, we need an
+answer key: which links were *actually important* this cycle? The code finds
+out by a counterfactual experiment: for every link, mentally delete it from
+the full candidate graph and recompute the widest-path bottleneck to base for
+every mission-critical rover. If deleting that link makes someone's best path
+strictly worse, the link was critical.
+
+**Exact definition.**
+```
+edge e is critical  ⟺  base_score − score(without e) > 1e-9
+base_score = min over mission-critical nodes of widest-path bottleneck (full graph)
+```
+
+**Why it exists.** It's per-cycle, computed on the *live* candidate graph —
+so it tracks the moving world. It's a true counterfactual ("what if this link
+were gone"), not a proxy like "high utility".
+
+### 2.2 `pruning_precision` — of what you kept, how much mattered?
+
+**Kid version.** You kept a pile of links. What fraction of the pile was
+actually critical? Keeping junk inflates the denominator and drops this.
+
+**Exact formula.** Per cycle: `|critical ∩ kept| / |kept|`
+(`NaN` if you kept nothing; the episode metric is the mean over cycles,
+skipping NaNs).
+
+### 2.3 `pruning_recall` — of what mattered, how much did you keep?
+
+**Kid version.** Of all the truly critical links this cycle, what fraction
+survived your pruning? Missing a critical link is how delivery dies.
+
+**Exact formula.** Per cycle: `|critical ∩ kept| / |critical|`
+(`NaN` if nothing was critical; averaged as above).
+
+**Why both exist.** They catch opposite diseases: low recall = "you dropped
+the bridge" (delivery dies); low precision = "you kept everything" (you
+didn't actually prune — see the full-graph arm: precision 0.089, recall
+1.000, by definition). Note the repaired baselines lead both (precision
+≈ 0.18, recall ≈ 0.82) while the QUBO's recall is 0.67 — the single most
+actionable number in the paper: *the QUBO's utility weights misrank
+delivery-critical edges*.
+
+**How they can fool you.** They're per-cycle fractions averaged over cycles —
+a cycle with 2 critical links counts as much as one with 20. And they judge
+against *delivery*-criticality only; an edge that matters for other reasons
+(redundancy, stability) is invisible to them.
+
+### 2.4 `kept_ratio` — how much did you prune at all?
+
+**Kid version.** The fraction of candidate links you kept, averaged over
+cycles. Full graph = 1.0 always. It's the "how aggressive are you" dial
+reading, not a quality score.
+
+---
+
+## Group 3 — The feasibility metrics: "did you obey the rules?"
+
+### 3.1 `violations` — three counts per episode
+
+**Kid version.** After each cycle's pruning, a referee checks the kept graph
+against the *same rules the QUBO was given* and writes tickets:
+
+**Exact definitions** (from `_violation_checks`, per cycle):
+```
+degree:       number of NODES whose kept degree exceeds the degree cap
+budget:       1 if kept cost (Σ round(cost × 10)) exceeds the effective budget, else 0
+connectivity: 1 if ANY mission-critical node can't reach the root, else 0
+```
+The episode metric sums the tickets over all 20 cycles — so "budget: 20.0"
+means *"violated in every single cycle"*, and "budget: 0.3125" means
+*"violated in about 6 cycles out of 20 across 16 seeds"*.
+
+**Why it exists.** This is the guarantees scoreboard. Its power comes from
+fairness: the referee applies identical rules to every arm, including the
+repaired baselines that share the QUBO's constraints. Against constraint-blind
+opponents this table would be a straw man; against them it's the whole point.
+
+**How it can fool you.**
+- Degree counts *nodes over the cap*, not by how much — a node at cap+1 and
+  a node at cap+10 both count once.
+- The budget check uses the *effective* budget of that cycle, so in the
+  nominal-K=15 regime (infeasible for everyone) every arm racks up ~20
+  budget tickets and the column measures the *regime*, not the arm. That's
+  why constraint conclusions are drawn at the binding budget.
+- Connectivity ≈ 0.4 per run appears in *every* arm including full graph:
+  those are cycles where the live network itself lost a required node —
+  nobody could have fixed that. It measures the world, not the pruner.
+
+### 3.2 `prune_modes` — the honesty ledger (the audit trail)
+
+**Kid version.** When the QUBO solver can't satisfy all constraints at once,
+it's designed to relax them in a fixed order (drop budget → keep budget only
+→ drop everything) — but it must *write down* which level it used, every
+solve. This is that diary.
+
+**Exact definition.** A counter over solves of: `full`, `no-budget`,
+`budget-only`, `unconstrained`, `mission-unreachable`.
+
+**Why it exists.** It's what caught the audit finding: at nominal K=15 the
+diary showed `no-budget` in **319 of 320 solves** — the "constrained" solve
+was silently unconstrained. Without this ledger the paper would still be
+publishing an unconstrained QUBO row. It converts "trust me, it's feasible"
+into "here are the receipts."
+
+---
+
+## Group 4 — The trust metrics: "does the model know who to believe?"
+
+### 4.1 `trust_spearman` — ranking quality
+
+**Kid version.** Line up all 10 rovers by what the model *believes* (trust)
+and by what is *true* (hidden reliability). Spearman asks: do the two
+line-ups agree in order? +1 = perfect ordering, 0 = no relationship, −1 =
+exactly backwards.
+
+**Exact formula.** Pearson correlation computed on **ranks** (ties get the
+average rank), averaged over cycles (NaN-skipping). Per cycle it's
+`spearman([trust.get(n) for n], [reliability[n] for n])`.
+
+**Why ranks and not raw values?** Because trust is a running estimate whose
+*absolute* scale drifts (a whole fleet having a bad day lowers every trust
+value); only the *ordering* reflects the model's actual knowledge.
+
+### 4.2 `trust_auc` — classification quality
+
+**Kid version.** Mark the top half of rovers (by true reliability) "good"
+and the bottom half "bad". AUC asks: if you pick one good and one bad rover
+at random, how often does the model score the good one higher? 1.0 = perfect,
+0.5 = coin flip.
+
+**Exact formula.** At episode end, labels = `reliability > median` (1/0):
+```
+AUC = Σ over (pos, neg) pairs of [score_pos > score_neg] + 0.5·[tie]
+      / (number of pos × number of neg)
+```
+
+**Why both exist.** Spearman tests *fine-grained ordering*; AUC tests
+*useful splitting* (can you act on it — whom to trust with the critical
+task?). A model can be decent at one and mediocre at the other. The QUBO arm
+has the best Spearman (0.295) but not the best AUC (0.681 vs 0.683) — a real
+pattern that a single metric would have hidden.
+
+**How they can fool you (the big one).** Both are computed on outcomes
+*observed under each pruner's own policy*. Different pruners → different
+links kept → different tasks attempted → **different evidence about each
+rover**. Comparing trust scores across arms is therefore
+selection-confounded: you're partly measuring the observation streams, not
+just the estimators. The paper flags this instead of harvesting the
+flattering number. A clean comparison would feed every arm the *same*
+unbiased exploration stream.
+
+---
+
+## Group 5 — The cost metrics: "what did it cost you?"
+
+### 5.1 `solve_ms` — the pruner's price tag
+
+Per-cycle wall-clock of the pruning decision, averaged over the episode.
+Ranges from 0.007 ms (threshold) to ~1,470 ms (QUBO). It's the number that
+justifies the cloud tier: a 1,470 ms decision protecting 0.25 ms of
+inference must run rarely, in the cloud.
+
+### 5.2 `gnn_ms` and the median trick
+
+GNN timings use `_timed_median_ms`: warm up once, then run **25 times** and
+take the **median**, not the mean. Why: at 0.25 ms scale, a single
+measurement is mostly noise (OS jitter, cache state); the median is robust
+to the occasional 10× outlier, while the mean would be dragged by it.
+(`gnn_full` — timing the same inference on the unpruned graph — exists
+purely for comparison and is switchable off, since measuring inside the
+production loop costs time.)
+
+### 5.3 `solves_per_cycle` — the amortization dial
+
+`solves performed / cycles run`. 1.0 = solving every cycle; 0.125 = solving
+every 8th cycle and reusing the stale decision in between. It converts the
+cloud-amortization table's "interval k" into actual load.
+
+---
+
+## Group 6 — The resilience metrics: "does it survive bad days?"
+
+### 6.1 `recovery` — fault recovery time
+
+**Kid version.** Scripted faults hit the fleet (battery drain, packet-loss
+spike...). For each fault: how many cycles until success climbs back to
+where it was *before* the fault?
+
+**Exact definition.**
+```
+baseline  = mean success over the 3 cycles before the fault started
+recovery  = first cycle AFTER the fault ends with success ≥ baseline
+            (measured as cycles since the fault began; None if never recovers)
+```
+
+**How it can fool you.** If the fault never actually dented success, the
+"recovery" is trivially zero — the code reports it anyway, which the paper
+acknowledges as a known soft spot of the measurement.
+
+### 6.2 `lifecycle` — the link jail census
+
+Counts of edges in each state: ACTIVE → SUSPECT (pruned once) → PROBATION
+(pruned again) → REMOVED (three strikes) → back to ACTIVE (kept again =
+rehabilitation). It exists so you can prove pruning isn't permanently
+blinding the system: a removed link is observable and can return. The
+hysteresis is deliberate — one bad cycle (a rover behind a hill) must not
+delete a link forever.
+
+---
+
+## Group 7 — The statistics toolkit: how comparisons are made honest
+
+### 7.1 Paired bootstrap CI — "how sure are we about the difference?"
+
+**Kid version.** To compare two pruners fairly, don't compare their averages
+— compare them *world by world*: seed 0 through both, seed 1 through both...
+That's a list of paired differences. Now shuffle-resample that list 10,000
+times (with replacement) and see the spread of the average difference.
+The middle 95% of that spread is the confidence interval.
+
+**Exact formula.** `diffs = success_A − success_B` per seed; resample with
+replacement 10,000×; report the 2.5–97.5 percentiles. (Fixed seed 0, so the
+CI is reproducible too.)
+
+**Reading rule.** If the interval excludes 0, the difference is real at the
+95% level. QUBO − threshold+repair = −4.1pp with CI [−6.4, −1.9] → real.
+
+### 7.2 Permutation p-value — the reality check
+
+**Kid version.** Suppose the two pruners were actually identical and the
+signs of the per-seed differences are just luck. Flip each difference's sign
+randomly 20,000 times and see how often a *random* arrangement looks at
+least as extreme as the real one. That frequency is the p-value.
+
+**Exact formula.** Two-sided sign-flip: `p = fraction of ±diffs arrangements
+with |mean| ≥ |observed mean|`.
+
+**Why both?** The CI shows the *size* of the effect; the p-value guards
+against reading noise as signal. They agree by construction here (both are
+paired, seeded, nonparametric — no normality assumptions).
+
+### 7.3 `norm_gap` — the universal solver grade
+
+```
+gap = (solver_energy − best_energy) / max(1, |best_energy|)
+```
+Zero means exact; 0.10 means 10% worse than best. The `max(1, ...)` stops
+near-zero optima from making tiny absolute differences look like huge
+percentages.
+
+### 7.4 Exact-solve rate — the pass/fail count
+
+The fraction of instances where the solver's normalized gap is below `1e-9`
+(i.e., it found *the* optimum, to floating-point precision). This is the
+number behind "annealers solve 48–64%", "projected annealer 100%",
+"95% vs MILP optima". It's deliberately strict: near-misses don't count,
+because for constraint-carrying systems a "close" answer can be an illegal
+one.
+
+---
+
+## The one-paragraph summary
+
+> Success says **whether the fleet works**; offload and delivery-failure say
+> **which of two ways it fails**; precision/recall say **whether the pruner
+> kept the links delivery actually needed**; violations and prune-modes say
+> **whether the rules were obeyed — with receipts**; Spearman/AUC say
+> **whether trust knows who's reliable (with a confound we admit)**;
+> timings say **what it all costs**; recovery and lifecycle say **whether it
+> bounces back**; and bootstrap CIs + permutation p-values say **whether any
+> of these differences is real**. No single number can lie when its two
+> neighbors are watching.
