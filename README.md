@@ -41,6 +41,35 @@ uv run example.py
 - `scale_runner.py` — scaling experiments (fleet size vs edges, variables,
   solve time, energy vs greedy baseline, GNN latency full vs pruned).
 
+## Web console
+
+A live 3D console (React, react-three-fiber, pmndrs postprocessing) drives
+the real Python pipeline with rover positions from a browser-side
+differential-drive simulation of the Gazebo SDF rover.
+
+```bash
+npm install
+npm run dev        # Python planner on :8765 and Vite on http://127.0.0.1:5173
+npm test           # TypeScript motion tests and Python planner/HTTP tests
+npm run build      # type-check and production bundle
+```
+
+`npm run dev` uses `.venv/bin/python` when it exists (set `FLEET_PYTHON` to
+override). Installing `dwave-neal`, `dwave-tabu` or `openjij` into that
+environment enables the matching solver baselines in the comparison menu.
+
+- `shared/fleet-config.json` is the single source for parameter limits,
+  presets (with measured cycle times), and the comparison catalogue with
+  the published reference numbers. Both the TypeScript client and
+  `web/fleet_session.py` read it.
+- `web/fleet_session.py` wraps `RoverSimulation` so live positions replace
+  its random walk, runs paired assignment baselines on the same pruned
+  topology, and runs QUBO samplers on the same Q matrix as our annealer.
+- `src/core/` holds the framework-free motion math (exact arc integration,
+  wheel-limit saturation, collision-safe sequential commits, deadlock
+  detours); `src/scene/` renders the fleet, links, beacons and ground in
+  about seven draw calls with instancing; `src/ui/` is the HUD.
+
 ## Battle Tests
 
 To run the full test suite (construction invariants, brute-force ground

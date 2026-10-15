@@ -1,0 +1,45 @@
+/*
+ * Spacecraft materials: white ceramic panels and gold MLI foil over a dusk
+ * basalt surface, with international orange reserved for selection and alarms.
+ * The scene palette in src/scene/palette.ts uses the same values.
+ */
+:root {
+  --horizon: #141821;
+  --basalt: #252a33;
+  --ceramic: #eceef0;
+  --ceramic-2: #e0e4e8;
+  --ceramic-3: #d3d8de;
+  --line: #c3c9d1;
+  --ink: #1d2430;
+  --ink-2: #4c5563;
+  --ink-3: #78818f;
+  --foil: #e2a93b;
+  --foil-ink: #87590c;
+  --signal: #ff5a1f;
+  --signal-ink: #b03a0e;
+  --mint: #4fd1b5;
+  --mint-ink: #17705d;
+  --baseline: #6f86ae;
+  --baseline-ink: #3e5482;
+
+  --font: 'Saira', 'Barlow', system-ui, sans-serif;
+  --step--1: 0.75rem;
+  --step-0: 0.8125rem;
+  --step-1: 0.9375rem;
+  --step-2: 1.125rem;
+  --step-3: 1.5rem;
+  --step-4: 2.125rem;
+
+  --gap: 16px;
+  --radius-panel: 14px;
+  --radius-control: 8px;
+  --panel-shadow: 0 18px 40px -18px rgba(4, 7, 12, 0.7), 0 2px 6px rgba(4, 7, 12, 0.25);
+  --left-width: 336px;
+  --right-width: 292px;
+  --top-height: 56px;
+  color-scheme: light;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --motion: 0; }
+}

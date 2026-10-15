@@ -1,0 +1,317 @@
+\section{The Causal Simulation Harness}
+\label{ch:simulation}
+
+Every mission-level claim in this report rests on a single experimental
+instrument: a time-stepped world simulator that exercises the complete
+pipeline, from raw link observations through constrained edge pruning,
+graph neural network scoring, and task assignment, down to task outcomes
+and trust updates. The defining design requirement of this harness is that
+mission success must \emph{causally} depend on the pruned topology, not
+merely correlate with it. A purely correlational design, in which outcomes
+are drawn independently of which links survived pruning, would make the
+comparison between pruners meaningless: any pruning strategy would look as
+good as any other, and a simulator could not tell the difference between
+a method that preserves mission-critical connectivity and one that severs
+it. We therefore built the harness around an explicit causal chain in
+which the kept graph determines how reliably a task result can be
+delivered, and delivery reliability feeds directly into whether the task
+counts as a success. This chapter describes that harness: the per-cycle
+phases, the hidden ground truth against which decisions are graded, the
+delivery model that closes the causal loop, the fault and staleness
+machinery, and the statistical protocol attached to every comparison.
+
+\subsection{Per-Cycle Phases}
+
+The simulation advances in discrete cycles. Within each cycle, five
+phases execute in a fixed causal order, so that every quantity a phase
+consumes was produced by a phase that ran before it in the same cycle or
+in an earlier one. Figure~\ref{fig:sim-phases} summarises the flow.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+      font=\small,
+      phase/.style={rectangle, rounded corners=2pt, draw, thick,
+        align=center, minimum width=4.1cm, minimum height=1.05cm,
+        fill=white},
+      fb/.style={rectangle, rounded corners=2pt, draw, thick, dashed,
+        align=center, minimum width=4.1cm, minimum height=0.9cm},
+      arr/.style={-{Stealth[length=2.5mm]}, thick},
+      node distance=0.55cm and 1.6cm
+    ]
+    \node[phase] (p1) {\textbf{Phase 1: World step}\\ rovers move, links observed\\ (packet loss $5\,\%$), freshness\\ decays, batteries drain};
+    \node[phase, below=of p1] (p2) {\textbf{Phase 2: Candidate graph}\\ build dynamic graph, compute\\ fresh per-edge features};
+    \node[phase, below=of p2] (p3) {\textbf{Phase 3: Pruning}\\ QUBO pruner or baseline selects\\ the working graph};
+    \node[phase, below=of p3] (p4) {\textbf{Phase 4: Scoring and}\\ \textbf{assignment}\\ GNN scores on the working graph,\\ tasks assigned, faults may act};
+    \node[phase, below=of p4] (p5) {\textbf{Phase 5: Outcomes}\\ sample success from the hidden\\ reliability field};
+    \node[fb, right=of p3] (fb1) {\textbf{Trust update}\\ feeds next cycle's\\ node and edge features};
+
+    \draw[arr] (p1) -- (p2);
+    \draw[arr] (p2) -- (p3);
+    \draw[arr] (p3) -- (p4);
+    \draw[arr] (p4) -- (p5);
+    \draw[arr, dashed] (p5.east) -- ++(0.8,0) |- (fb1.south);
+    \draw[arr, dashed] (fb1.north) |- ($(p1.east)+(0.8,0)$) -- (p1.east);
+  \end{tikzpicture}
+  \caption{The five per-cycle phases of the simulation harness, executed
+    in causal order. The dashed loop closes the cycle: task outcomes
+    update the trust model, and the updated trust enters the node and
+    edge features of the following cycle.}
+  \label{fig:sim-phases}
+\end{figure}
+
+\paragraph{Phase 1: world step.} Rovers first move, which changes pairwise
+proximities and hence which links are physically available at all. Each
+link within communication range is then observed subject to a packet loss
+process with a default loss probability of $5\,\%$. A link that is not
+observed in a cycle does not vanish instantly; instead, its freshness
+decays with an exponential time constant of $3$ cycles, so that recent but
+unconfirmed information is down-weighted rather than discarded. Batteries
+drain during the same phase. This phase produces the raw, noisy,
+partially stale view of the world that a real fog-tier fleet would
+actually possess.
+
+\paragraph{Phase 2: candidate graph construction.} From the current
+observations the harness builds the dynamic candidate graph and attaches
+fresh per-edge features: trust, link quality, battery level, proximity,
+observation freshness, task criticality, and an estimate of processing
+cost. These are exactly the features the constrained QUBO formulation of
+the earlier chapters consumes; nothing is hidden from or added to the
+pruner beyond what the observation model provides.
+
+\paragraph{Phase 3: pruning.} A pruner selects the working graph from the
+candidate graph. The production choice is the constrained QUBO pruner,
+solved with the projected annealer. For comparison, the harness can
+instead keep the full graph, apply a link-quality threshold
+($\tau = 0.4$), or retain the top fraction ($0.5$) of edges per node.
+All pruners see the same candidate graph and the same features, so any
+difference in downstream mission performance is attributable to the
+pruning decision itself.
+
+\paragraph{Phase 4: scoring and assignment.} The trust-aware graph neural
+network runs one message-passing round \emph{on the working graph only}
+and scores every rover. Tasks, two per cycle by default, are then
+assigned by capacity-aware greedy matching. Scripted fault events may be
+active during this phase, degrading the true reliability of specific
+rovers for a defined window.
+
+\paragraph{Phase 5: outcomes and trust update.} Task outcomes are sampled
+from the hidden ground-truth reliability field described below. The
+observed successes and failures update the per-rover trust model, and the
+updated trust values become features in the next cycle. This feedback
+loop is essential: the harness evaluates not a static estimator but a
+closed-loop system whose beliefs evolve as evidence accumulates.
+
+\subsection{Hidden Ground Truth}
+
+Each rover possesses a true task-execution reliability that the pipeline
+never observes directly. The truth is structured in two deliberate ways.
+
+First, it is \emph{spatially correlated}: nearby rovers share terrain and
+interference conditions, so their reliabilities are drawn from a common
+regional level. This is what gives the graph structure real content. If
+reliabilities were independent, a neighbour's track record would carry no
+information about a rover's own, and graph-based scoring would have no
+legitimate advantage to discover. Under spatial correlation, message
+passing over the working graph aggregates genuinely informative evidence.
+
+Second, the truth may be \emph{nonstationary}. An optional per-cycle
+random walk lets each rover's reliability drift over the mission. With
+drift enabled, a trust value that was accurate ten cycles ago is stale
+now, which is precisely the regime in which observation freshness,
+exploration, and the probation treatment of re-added edges earn their
+keep. All headline results in this report state explicitly whether drift
+was active.
+
+Two further properties of the ground truth deserve emphasis. First, it
+is generated before any pipeline decision is made within a cycle, so no
+modelling choice can leak into the standard against which it is graded.
+Second, every run is fully determined by its seed: the same seed
+reproduces the same reliability field, the same packet loss realisations,
+and the same outcome draws, which is what makes the paired per-seed
+statistics of Section~\ref{sec:sim-stats} meaningful. When two arms are
+evaluated on the same set of seeds, they face literally identical worlds
+and differ only in the decisions they take inside them.
+
+\subsection{The Causal Delivery Model}
+
+The causal heart of the harness is the rule that converts a pruning
+decision into a mission outcome. A task counts as successful only if two
+independent events both occur:
+
+\begin{enumerate}
+  \item \textbf{Execution.} The assigned rover executes the task
+    successfully, a Bernoulli event whose probability is that rover's
+    hidden reliability.
+  \item \textbf{Delivery.} The result is delivered back to the root of
+    the network through the \emph{kept} graph.
+\end{enumerate}
+
+Delivery probability is governed by a \emph{path factor}: the widest-path
+(maximum bottleneck) reachability from the assigned rover to the root,
+computed over the working graph with link quality as the bottleneck
+metric. Intuitively, a result travels along the route whose weakest link
+is strongest; if every remaining route crosses a poor link, delivery is
+unlikely, no matter how reliable the executing rover was.
+
+This model is what makes the harness honest about pruning. Because the
+path factor is computed on the \emph{kept} graph, a pruner that removes
+redundant links can strictly reduce the set of available routes and
+thereby degrade delivery for exactly the missions that depend on
+bottleneck-limited paths. The harness is therefore fully capable of
+reporting that the QUBO pruner loses to a denser baseline on raw mission
+success, and indeed it does so at larger fleet scales; we treat that
+outcome as a finding to explain, not a defect to tune away. A simulator
+whose outcomes ignored the pruned topology could never surface such a
+result, which is why we regard the causal delivery model as the single
+most important property of the evaluation.
+
+\subsection{Default Configuration}
+
+Table~\ref{tab:sim-params} collects the key harness parameters and their
+defaults. These values define the canonical configuration; every
+experiment that deviates from them says so.
+
+\begin{table}[htbp]
+  \centering
+  \caption{Key parameters of the simulation harness and their default
+    values.}
+  \label{tab:sim-params}
+  \begin{tabular}{@{}llp{5.6cm}@{}}
+    \toprule
+    Parameter & Default & Role \\
+    \midrule
+    Fleet size & 6 rovers & Number of rovers in the arena \\
+    Tasks per cycle & 2 & Tasks offered for assignment each cycle \\
+    Communication range & $4.0$\,m & Radius within which links can exist \\
+    Packet loss & $0.05$ & Per-cycle link observation failure \\
+    Freshness time constant & 3 cycles & Decay rate of unobserved links \\
+    Exploration rate & $0.15$ & Fraction of assignments used to probe \\
+    Load increment & $0.15$ & Compute load added per assigned task \\
+    Load decay & $0.5$ & Per-cycle recovery of available compute \\
+    Minimum trust & $0.25$ & Floor below which trust never falls \\
+    Compute need & $0.3$ & Minimum free compute a task requires \\
+    Mission-critical nodes & 3 & Nodes connectivity must always reach \\
+    QUBO budget & 15 & Global budget in the pruning constraint \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\subsection{Fault Injection and Edge Lifecycle}
+
+Controlled degradation is as important to the evaluation as nominal
+operation. The harness supports \emph{scripted fault events}, each with a
+start cycle and a duration. A typical event drops one rover's hidden
+reliability for a fixed window, after which the rover recovers. Because
+the fault acts on the hidden truth while the trust model observes only
+outcomes, we can measure a \emph{recovery time}: how many cycles elapse
+between the end of the fault and the point at which the learned trust
+value and the assignment behaviour reflect the recovered reality. This
+metric captures the responsiveness of the closed loop, not merely its
+steady-state accuracy.
+
+Complementing faults, an \emph{edge lifecycle tracker} records when links
+are removed and re-added by the pruner across cycles. A re-added edge
+receives a probation boost: it is provisionally trusted more than its
+raw features would suggest, so that the graph can recover quickly from a
+pruning decision that later turns out to have been too aggressive. The
+tracker also yields the topology churn statistics reported alongside the
+performance metrics, letting us distinguish a pruner that is stable but
+wrong from one that is adaptive but noisy.
+
+\subsection{Cloud Amortization and Staleness}
+
+Solving the constrained QUBO is the most expensive stage of the pipeline,
+and on a real deployment it would run on a cloud tier rather than on the
+rovers. The harness models this with a \emph{solve interval} $k$: the
+QUBO is solved every $k$ cycles, and between solves the most recent kept
+set is reused verbatim. This creates a controlled notion of staleness.
+With $k = 1$ the pruner always acts on fresh features; with larger $k$
+the fleet operates on a pruning decision that may no longer match the
+observed world. A dedicated staleness mode sweeps the interval and
+quantifies the margin the pipeline retains, which is the quantity a
+deployment engineer actually needs when sizing the cloud link budget.
+
+\subsection{Metrics}
+
+The harness reports a fixed battery of metrics for every run:
+
+\begin{itemize}
+  \item \textbf{Task success rate}, the primary mission metric, computed
+    under the causal delivery model.
+  \item \textbf{Per-stage wall-clock latency}, measured with a
+    median-of-repeats timer. We deliberately avoid coarse clocks: the
+    heuristic baselines run in microseconds, and reporting them as zero
+    would conceal exactly the cost asymmetry between the QUBO pruner and
+    its competitors that any honest comparison must show.
+  \item \textbf{Trust-versus-truth Spearman correlation}, which grades
+    the trust model against the hidden reliability field without
+    requiring the trust values to be calibrated probabilities.
+  \item \textbf{Topology churn}, the rate at which the kept graph
+    changes across cycles.
+  \item \textbf{Edge lifecycle counts}: additions, removals, and
+    re-additions under probation.
+  \item \textbf{Fault recovery time}, as defined above.
+\end{itemize}
+
+\subsection{Statistical Protocol}
+\label{sec:sim-stats}
+
+Every comparison claim in this report carries two statistical
+instruments, computed on paired per-seed differences so that common
+randomness across arms is cancelled rather than mistaken for signal.
+First, we report a \emph{paired bootstrap confidence interval} with
+$10\,000$ resamples, which quantifies the size and precision of the
+difference. Second, we report a \emph{permutation test} with $20\,000$
+permutations, which yields an exact finite-sample $p$-value under the
+null hypothesis that the two arms are exchangeable. A difference is
+described as significant only when the interval excludes zero and the
+permutation test agrees; differences that fail this test, including some
+that would flatter our own method, are reported as not significant.
+
+\subsection{Run Modes}
+
+The harness exposes five run modes, each corresponding to a class of
+experiment reported in later chapters:
+
+\begin{description}
+  \item[Single run.] One mission with a per-cycle log, used for
+    inspection, debugging, and the worked traces in this report.
+  \item[Benchmark.] A pruner comparison at a fixed operating point: 10
+    rovers, 20 steps, and 10 seeds, with real per-stage timing for every
+    pruner. The four pruners compared are summarised in
+    Table~\ref{tab:pruners}.
+  \item[Ablation.] Four assignment arms over the same harness: the full
+    GNN pipeline, a no-graph arm that scores nodes without message
+    passing, a trust-only arm, and a random arm. This isolates the
+    contribution of each modelling choice.
+  \item[Staleness.] A sweep of the solve interval described above,
+    measuring the margin retained under cloud amortization.
+  \item[Training.] A held-out evaluation of the trained readout against
+    the fixed-weight readout, so that the training result (which is
+    negative) is measured on data the fit never saw.
+\end{description}
+
+\begin{table}[htbp]
+  \centering
+  \caption{The four pruning strategies compared in benchmark mode.}
+  \label{tab:pruners}
+  \begin{tabular}{@{}lp{8.2cm}@{}}
+    \toprule
+    Pruner & Selection rule \\
+    \midrule
+    QUBO (production) & Constrained optimization over utility, degree,
+      budget, and connectivity, solved by projected annealing \\
+    Full graph & Keep every candidate edge; no pruning \\
+    Quality threshold & Keep edges with link quality at least $0.4$ \\
+    Top-$K$ per node & Keep the best fraction $0.5$ of each node's edges \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Taken together, the causal delivery model, the hidden spatially
+correlated ground truth, the fault and staleness machinery, and the
+paired statistical protocol make the harness an audit instrument rather
+than a demonstration stage. It is designed so that the pipeline can
+lose, and the chapters that follow report the cases where it does with
+the same prominence as the cases where it wins.

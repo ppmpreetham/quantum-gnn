@@ -1,0 +1,151 @@
+\section{Conclusion and Future Work}
+
+\subsection{What was built}
+
+This project set out to answer a practical question: can a constrained
+combinatorial encoding of graph pruning, combined with trust-aware learning
+on the surviving topology, improve task allocation in a dynamic rover
+network? To answer it honestly we built the complete pipeline rather than a
+toy demonstration. The system consists of a constrained QUBO formulation of
+edge selection with degree, budget, flow connectivity, and flow capacity
+constraints; a feasibility-projected production annealer that moves only in
+the space of valid edge sets; a trust-aware graph neural network that scores
+rovers on the pruned topology; a capacity-aware greedy assignment stage; and
+an online trust model that folds each mission's outcomes back into the next
+cycle's features. Around this core we built the apparatus needed to audit
+it: a causal simulation harness in which mission success genuinely depends
+on the kept topology, an exact MILP baseline for ground truth, a hostile
+test suite of 491 checks organised into fourteen sections, a physics
+integration based on Gazebo Harmonic and ROS 2 Jazzy, and an interactive
+browser console driven by a custom three.js simulation engine that runs the
+same allocation logic against a live visualisation.
+
+\subsection{What was proven}
+
+The QUBO encoding itself is verified three independent ways: an independent
+re-derivation of the energy function agrees with the constructed $Q$ matrix
+term by term; brute-force enumeration of all edge subsets on small instances
+reproduces the encoding's optima; and an exact linearized solve of the
+matrix with CBC confirms the same energies. The production annealer is 100\%
+exact on small instances against enumeration, 95\% exact against MILP on
+twenty larger instances with a mean true optimality gap of $7\times10^{-5}$,
+and 87\% exact across all sensitivity perturbations of temperatures,
+cooling, restarts, penalty scales, and move probabilities. At the system
+level, trust-aware assignment beats random assignment by $+13.8$ percentage
+points of mission success and a trust-only heuristic by $+8.13$ points, with
+a paired bootstrap 95\% confidence interval of $[+4.2, +11.7]$ and a
+permutation $p$-value of $0.016$. Trust tracking itself is worth $+13.75$
+points of staleness margin: the benefit persists when topology decisions are
+amortised over several cycles, which matters when the solve must be
+offloaded to a cloud tier.
+
+\subsection{What was disproven or humbled}
+
+An honest audit must report what did not work, and this project treats those
+results as first-class findings. First, classical MILP solved by CBC is
+exact and roughly one hundred times faster than the annealer on the same
+instances. The QUBO formulation is therefore a hardware-target encoding, not
+the recommended classical solver, and the paper says so without
+qualification. Second, four serious annealing samplers, a bit-level
+simulated annealer, a production simulated annealing library, a tabu search,
+and simulated quantum annealing, reached the optimum on the penalty-encoded
+landscape only 48\% to 64\% of the time, and random bit-string restarts
+returned infeasible states in 19 of 25 instances. Third, at the ten-rover
+scale a simple threshold pruner beats the QUBO pruner on raw mission
+success, 38.2\% to 33.8\% with $p = 0.028$, because the threshold keeps
+redundant links that rescue delivery through bottleneck topologies. Fourth,
+message passing adds only $+1.7$ insignificant points over a no-graph
+readout, so the graph mechanism's value is not yet established at this
+scale. Fifth, a cloud-trained readout is 3.9 points worse than the fixed
+hand-designed weights ($p = 0.49$), a clean null result against the
+trainability hypothesis.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  col/.style={draw, rounded corners=2pt, inner sep=8pt, align=left,
+              text width=6.4cm},
+]
+\node[col] (left) {%
+  \textbf{What we set out to prove}\\[2pt]
+  $\bullet$ Constrained QUBO pruning is a viable edge-selection encoding\\
+  $\bullet$ Annealing samplers solve the encoded problem reliably\\
+  $\bullet$ Graph message passing beats a flat readout\\
+  $\bullet$ A trained readout beats fixed weights};
+\node[col, right=1.2cm of left] (right) {%
+  \textbf{What we actually proved}\\[2pt]
+  $\bullet$ Encoding verified three ways; projected annealer 95 to 100\%
+    exact\\
+  $\bullet$ Generic samplers reach the optimum only 48 to 64\% of the time\\
+  $\bullet$ Message passing adds $+1.7$ points, not significant\\
+  $\bullet$ Trained readout is 3.9 points worse ($p = 0.49$)};
+\draw[-{Stealth[length=3mm]}, thick] (left.east) to (right.west)
+  node[midway, above, font=\footnotesize\itshape] {audit};
+\end{tikzpicture}
+\caption{The distance between the proposal and the audited result. Every
+item on the left survived contact with measurement in a modified form; the
+right column is what the evidence supports.}
+\label{fig:conclusion-audit}
+\end{figure}
+
+\subsection{Lessons}
+
+Four lessons generalise beyond this project. First, verify encodings
+against independent ground truth before trusting them: our encoding survived
+because it was cross-checked against re-derivation, enumeration, and an
+exact solver, and that triple verification is what lets the downstream
+claims stand. Second, penalty-encoded constrained QUBOs are a hard landscape
+for generic samplers; the penalty barriers that enforce feasibility are
+exactly what trap samplers that move in raw bit space. Third,
+feasibility-aware move sets matter more than solver sophistication: the
+projected annealer's advantage came from proposing only valid moves and
+repairing candidates, not from a cleverer temperature schedule. Fourth,
+negative results deserve the same prominence as positive ones, because the
+negative results here, the MILP dominance, the threshold pruner's win, and
+the readout-training null, are the findings most likely to save a future
+team from repeating the same detours.
+
+\subsection{Future work}
+
+Several directions follow directly from what the audit exposed. The Gazebo
+integration should publish velocity commands so that physics drives the
+planning inputs rather than replaying scripted poses, closing the loop
+between the simulator and the allocator. The browser console needs WebSocket
+streaming in place of request-response stepping, plus session persistence so
+long missions survive reconnects. The pruning formulation should be extended
+to hierarchical or clustered variants, since connectivity is currently
+enforced only up to twenty rovers due to the dense memory footprint of the
+matrix. The $Q$ matrix should be run on real annealing hardware from D-Wave
+to test whether the hardware changes the sampler-reliability picture that
+the classical samplers painted. The readout-training null result deserves a
+revisit with larger and more diverse training data, since the current
+failure may be a data problem rather than a model problem. Finally, the
+deterministic link-quality model should be replaced with richer radio models
+that include fading and interference, which would stress the trust model in
+ways the current environment cannot.
+
+\subsection{Closing remarks}
+
+Building this system taught the team that the distance between a plausible
+pipeline and a trustworthy one is measured in verification infrastructure,
+not in model complexity. The parts of the project we are most confident in
+are not the cleverest components; they are the components pinned down by
+independent ground truth, and the parts we trusted too early were the ones
+that measurement later humbled. We set out to show that a quantum-inspired
+encoding could earn its place in a rover network, and we ended up with
+something more useful: a complete, audited picture of where the encoding
+helps, where it does not, and exactly how much each design decision is
+worth. That picture, including its negative regions, is the contribution.
+
+\subsection{Pending items in this report}
+
+The following placeholders remain in this report and must be completed before submission:
+
+\begin{itemize}
+  \item title page author names and date;
+  \item the abstract text;
+  \item Gazebo world and status-message screenshots;
+  \item fleet console screenshots (orbit view, mission strip), performance capture, and demo video link;
+  \item the reference list for the final section (to be supplied separately).
+\end{itemize}

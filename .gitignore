@@ -2,3 +2,9 @@ __pycache__/
 *.pyc
 .venv/
 paper/fiziko/
+node_modules/
+dist/
+*.tsbuildinfo
+playwright-report/
+test-results/
+.playwright-mcp/

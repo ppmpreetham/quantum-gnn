@@ -1,0 +1,63 @@
+\documentclass[11pt]{article}
+
+\usepackage[a4paper,margin=2.4cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds}
+\usepackage{pgfplots}
+\pgfplotsset{compat=1.18}
+\usepackage{hyperref}
+\usepackage{microtype}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcommand{\fillme}[1]{\textbf{[TO FILL: #1]}}
+
+\title{Trust-Aware Task Allocation in Dynamic Rover Networks\\
+with Constrained QUBO Edge Pruning:\\
+a Complete Project Report}
+\author{\fillme{author names, one per line}}
+\date{\fillme{submission date}}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\fillme{abstract text; 150 to 250 words summarizing motivation, pipeline,
+verification approach, headline results, and the honest limitations}
+\end{abstract}
+
+\tableofcontents
+\newpage
+
+\input{chapters/ch01_introduction}
+\input{chapters/ch02_background}
+\input{chapters/ch03_architecture}
+\input{chapters/ch04_qubo}
+\input{chapters/ch05_solvers}
+\input{chapters/ch06_trust_gnn}
+\input{chapters/ch07_simulation}
+\input{chapters/ch08_exact_baselines}
+\input{chapters/ch09_scaling}
+\input{chapters/ch10_testing}
+\input{chapters/ch11_results}
+\input{chapters/ch12_gazebo}
+\input{chapters/ch13_webengine}
+\input{chapters/ch14_conclusion}
+
+\section*{References}
+\addcontentsline{toc}{section}{References}
+\fillme{reference list for the final section; the authors will supply the
+references separately. Suggested entries to confirm: Sabater and Sierra
+(2005) on trust and reputation, the CBC user guide, the D-Wave sampler
+documentation, the OpenJij paper, Gazebo Harmonic and ROS 2 Jazzy
+documentation, and the three.js and React documentation.}
+
+\appendix
+\input{chapters/appA_pending}
+
+\end{document}

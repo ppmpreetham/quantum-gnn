@@ -1,0 +1,359 @@
+\section{The Custom three.js Simulation Engine}
+\label{sec:webengine}
+
+The research pipeline described in the preceding chapters produces its
+results through batch experiments: a simulator steps through planning
+cycles, records outcomes, and reports statistics after the fact. Such
+experiments establish what the pipeline \emph{does}, but they are poorly
+suited to exploring how it \emph{behaves}: how pruned topologies respond to
+faults, how trust estimates track hidden reliability, or how competing
+assignment policies diverge when driven by identical evidence. To make
+these dynamics inspectable, we built an interactive browser console that
+drives the \emph{real} research pipeline, comprising constrained QUBO edge
+pruning, trust-aware GNN scoring, greedy task assignment, and trust model
+updates, through a Python backend, while the browser itself owns only
+kinematics and rendering. The console is not a visualization bolted onto
+recorded data; every cycle shown on screen is produced by the same code
+that generated the results in this report. We regard the engine as a work
+in progress, and this chapter describes its current state, including
+explicitly marked placeholders for material that remains to be captured.
+
+\fillme{screenshot: orbit view of the fleet console with link arcs visible}
+
+\subsection{Overview and Design Principles}
+
+The console is a single-page web application written in TypeScript with
+React~18, rendered through three.js via react-three-fiber, with
+application state held in a Zustand store and the project bundled by Vite.
+The backend is a deliberately dependency-free Python standard-library HTTP
+server, chosen so that the console runs anywhere the research code runs,
+without a package installation step beyond what the pipeline already needs.
+Three principles guided the design.
+
+First, \emph{the browser never plans}. All optimization, scoring, and
+outcome sampling happen in the Python session server; the client computes
+rover motion and draws the scene. This separation guarantees that what the
+user sees is the pipeline under test, not a reimplementation that might
+quietly diverge from it. Second, \emph{one source of truth for
+configuration}. A shared configuration file, read by both the TypeScript
+client and the Python server, defines the arena geometry, vehicle
+kinematic limits, every tunable parameter with its scope and default, the
+calibrated presets, and the comparison catalogue with its published
+reference numbers. The two processes cannot disagree about, say, the
+rover's turning limit, because both read the same numbers. Third,
+\emph{honest comparison by construction}. The console implements the
+paired-comparison methodology of the audit rather than a looser visual
+side-by-side, and it discloses the baselines it does not offer rather than
+hiding them.
+
+\subsection{Two Processes, One Command}
+
+A single development script starts both processes: the session server and
+the Vite development server. At runtime the two communicate over a small
+JSON API. The client polls \code{GET /api/health} at startup and
+periodically thereafter; the response reports which optional solvers are
+installed (neal, tabu, SQA, MILP), so the comparison menu only offers
+baselines that can actually run on the current machine. Each planning
+cycle is requested with \code{POST /api/step}, whose response carries the
+kept-edge topology, assignment, per-rover scores and trust values, outcome
+realizations, and wall-time measurements for every active baseline.
+
+\begin{table}[t]
+\centering
+\caption{HTTP API of the session server. All validation failures return a
+structured error body; no response ever contains a NaN literal.}
+\label{tab:api}
+\begin{tabular}{@{}llp{5.6cm}@{}}
+\toprule
+Method and path & Error & Meaning \\
+\midrule
+\code{GET /api/health} & 200 & Reports installed optional solvers and session load. \\
+\code{POST /api/step} & 400 & Body fails validation (malformed JSON, body over 32~KiB, non-finite or out-of-arena positions, parameters out of range, more than 8 faults). \\
+\code{POST /api/step} & 429 & All 16 session slots are occupied and none is evictable. \\
+\code{POST /api/step} & 503 & The solve semaphore is saturated (4 concurrent solves); retry later. \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Because the console is interactive, the server is hardened against inputs
+a batch script would never produce. Request bodies are capped at 32~KiB;
+rover positions must be finite and inside the arena; every tunable
+parameter is range-checked against the shared configuration; and at most
+8~faults may be injected per cycle. Concurrency is bounded by a semaphore
+admitting four simultaneous solves, with \code{503} returned when the
+server is busy, so a user dragging a slider rapidly cannot queue an
+unbounded solve backlog. The server hosts at most 16~sessions, each with a
+600~s time-to-live and busy-window eviction, returning \code{429} when
+full. Finally, every outgoing payload passes through a sanitizer, so NaN
+or infinite values, which arise legitimately inside numerical code during
+degenerate configurations, can never leak into a JSON response, where they
+would be unparseable. Table~\ref{tab:api} summarizes the surface.
+
+\begin{figure}[t]
+\centering
+\resizebox{0.95\textwidth}{!}{%
+\begin{tikzpicture}[
+  font=\small,
+  box/.style={draw, rounded corners=2pt, align=center, minimum height=0.85cm, inner sep=4pt},
+  layer/.style={draw, dashed, rounded corners=4pt, inner sep=6pt},
+  arr/.style={-{Latex[length=2mm]}, thick},
+  every label/.style={font=\footnotesize\itshape}
+]
+% Browser engine boxes
+\node[box] (core) {Engine core\\ \footnotesize fixed-step kinematics, spawn, delivery};
+\node[box, right=0.5cm of core] (render) {Render layer\\ \footnotesize instanced three.js scene};
+\node[box, below=0.45cm of core] (state) {State store\\ \footnotesize Zustand, 240-cycle ring};
+\node[box, below=0.45cm of render] (ui) {UI panels\\ \footnotesize mission, tuning, roster, minimap};
+
+\begin{scope}[on background layer]
+  \node[layer, fit=(core)(render)(state)(ui),
+        label={[anchor=north west]north west:Browser (React, three.js)}] (browser) {};
+\end{scope}
+
+% Server side
+\node[box, right=2.6cm of render] (server) {Session server\\ \footnotesize stdlib HTTP, 16 sessions, 4-solve semaphore};
+\node[box, below=0.9cm of server] (pipeline) {Research pipeline\\ \footnotesize QUBO pruning, GNN scoring,\\ \footnotesize trust updates, outcomes};
+
+% Arrows
+\draw[arr] (core) -- node[above, font=\footnotesize]{\code{POST /api/step}} (server);
+\draw[arr] (server) -- node[below, font=\footnotesize]{topology, scores, outcomes} (core);
+\draw[arr] (server) -- node[right, font=\footnotesize]{one cycle} (pipeline);
+\draw[arr] (pipeline) -- node[left, font=\footnotesize]{results} (server);
+\draw[arr] (core) -- (render);
+\draw[arr] (core) -- (state);
+\draw[arr] (state) -- (ui);
+\draw[arr] (ui) -- node[below, font=\footnotesize]{tuning, faults} (state);
+\end{tikzpicture}}
+\caption{Console architecture. The browser owns kinematics, rendering,
+state, and interaction; the session server owns planning. A single shared
+configuration (not shown) is read by both sides.}
+\label{fig:webarch}
+\end{figure}
+
+Figure~\ref{fig:webarch} shows the division of labor. The browser engine
+splits into four cooperating layers: a pure, testable core implementing
+kinematics, spawning, and delivery; a render layer built on instanced
+three.js geometry; a central state store; and the UI panels. Only the core
+talks to the network.
+
+\subsection{The Shared Configuration}
+
+The shared configuration is the contract between client and server. It
+fixes the physical world: a circular arena of radius 6~m, rovers with body
+radius 0.62~m, wheel radius 0.16~m, and track 0.76~m, limited to a maximum
+wheel speed of 1.25~m/s, acceleration 0.9~m/s$^2$, braking 1.8~m/s$^2$,
+and yaw rate 1.8~rad/s. On top of this it defines 15~tunable parameters,
+each annotated with a \emph{scope} that the UI exposes to the user:
+session-scoped parameters restart the mission when changed (for example
+fleet size), planner-scoped parameters take effect on the next planning
+cycle (for example the QUBO budget or solve interval), and client-scoped
+parameters apply instantly (for example camera mode or render quality).
+
+Seven calibrated presets ship with the console
+(Table~\ref{tab:presets}), spanning benign field operations through a
+deliberately hostile communications regime. Each preset carries a measured
+per-cycle planning time on our reference machine, ranging from 140~ms for
+the lightest configuration to 1420~ms for the largest fleet, so users can
+see the real cost of the solver settings they choose rather than
+discovering it as interface lag. The same configuration also holds the
+comparison catalogue: for every baseline the console can run, it stores
+the published reference numbers from the audit, which the mission strip
+displays alongside live results.
+
+\begin{table}[t]
+\centering
+\caption{Calibrated mission presets. Planning times are measured per-cycle
+medians on our reference machine; where an exact value is not listed here
+we give the span across all presets, 140~ms to 1420~ms.}
+\label{tab:presets}
+\begin{tabular}{@{}lll@{}}
+\toprule
+Preset & Purpose & Cycle time (ms) \\
+\midrule
+field   & Benign outdoor survey, default mission            & 140 to 300 \\
+rapid   & Fast replanning, solve every cycle                & 140 to 400 \\
+relay   & Stretched topology stressing connectivity         & 300 to 700 \\
+swarm   & Many small rovers, dense graph                    & 400 to 1000 \\
+fleet16 & Sixteen rovers, upper end of the live fleet       & 900 to 1420 \\
+hostile & High packet loss, frequent faults, drift          & 300 to 900 \\
+tight   & Small QUBO budget, aggressive pruning             & 140 to 500 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Honest Comparison by Construction}
+
+A demo that lets the user pit our pipeline against alternatives invites an
+obvious failure mode: comparisons that look dramatic but are confounded.
+The console addresses this structurally. Assignment baselines
+(trust-only, random, and no-graph) do not run independent missions; they
+run as \emph{paired follower simulations} that share the primary mission's
+kept-edge topology, so they receive identical situational evidence and
+differ in assignment policy only. Faults injected from the UI, whether a
+reliability drop, battery drain, or a packet loss spike, are applied
+identically to the primary and all followers, preserving the pairing.
+Solver baselines (bit-level SA, neal, tabu, and SQA) run on the
+\emph{exact same $Q$ matrix} the production annealer just solved, seeded
+with the primary's previous solution as a warm start, and the console
+reports for each of them the energy gap, feasibility, matched-or-better
+rate, and wall time.
+
+The comparison menu also embodies the audit's honesty policy in a
+deliberately uncomfortable way: it excludes the two baselines that
+\emph{beat} our pipeline, the exact MILP solve and the simple threshold
+pruner, and says so in a footnote beneath the menu rather than concealing
+their existence. Users exploring the console see the same negative results
+the paper reports.
+
+\fillme{screenshot: mission strip during a live solver comparison}
+
+\subsection{The Engine Core}
+
+Motion and delivery are computed by a custom fixed-timestep engine written
+in pure TypeScript. Simulation advances at 1/120~s steps through an
+accumulator, with rendering interpolating between the two most recent
+states, so visual smoothness is decoupled from both the integration rate
+and the planner cadence. All simulation state lives in typed arrays rather
+than per-object JavaScript properties, which keeps memory layout flat,
+avoids per-frame allocation, and makes the hot loops friendly to the JIT.
+
+\paragraph{Kinematics.}
+Rovers are differential-drive vehicles. Rather than the common Euler
+approximation ($x \mathrel{+}= v\cos\theta\,\Delta t$ and so on), we
+integrate each step in exact constant-twist form: over a step the rover
+travels a circular arc determined by its linear and angular velocity, and
+the pose update is closed-form in the arc radius $v/\omega$. The naive
+formula divides by the yaw rate $\omega$, so we branch on
+$|\omega| < \varepsilon$ and evaluate the singular case through a
+$\operatorname{sinc}$ expansion, making the integrator singularity-free at
+zero yaw rate. Wheel-speed commands that exceed the 1.25~m/s limit are
+saturated by scaling \emph{both} wheels by the same factor, which
+preserves curvature: the rover follows exactly the same arc, only slower,
+rather than veering off the intended path. An asymmetric rate limiter
+enforces the 0.9~m/s$^2$ acceleration and 1.8~m/s$^2$ braking limits, so
+rovers stop faster than they start, a small asymmetry that reads as
+mechanically plausible on screen.
+
+\paragraph{Steering and collision avoidance.}
+The steering controller sums several influences: seek toward the current
+goal, quadratic repulsion from neighboring rovers, a keep-right rule for
+head-on encounters, a soft potential at the arena wall, and, for missions
+that want it, an optional tether pulling a rover toward its nearest
+network neighbor so the fleet does not silently fragment. A speed profile
+slows the rover into turns and as it approaches an arrival. Two hard
+guarantees sit beneath all of this. First, a \emph{collision invariant}:
+no pair of rovers may ever come closer than two body radii. Any
+integration step that would violate this is rejected, and the rover
+rotates in place instead, so interpenetration is impossible by
+construction regardless of how aggressive the steering sum becomes.
+Second, \emph{stuck detection}: a rover whose progress stalls executes
+alternating-side detours, escaping the symmetric deadlocks that pure
+repulsion fields are prone to.
+
+\paragraph{Spawning and task placement.}
+Missions begin from a deterministic spawn layout produced by dart throwing
+with a hexagonal lattice fallback, so a given fleet size and seed always
+yield the same starting configuration, keeping paired comparisons fair.
+Task sites are derived from a stable hash of the task identifier rather
+than from a stream of random draws, which means the same task id lands in
+the same place in the primary and in every follower simulation.
+
+\paragraph{Delivery model.}
+The browser reproduces the research harness's delivery semantics: message
+success follows a widest-path (maximum bottleneck) tree from each rover to
+the root rover, so the console's on-screen success statistics are the same
+quantity the offline simulator measures, not a decorative substitute. Task
+beacons carry 14~s timeouts, after which an unclaimed task expires and is
+recorded as a failure.
+
+\subsection{The Render Layer}
+
+Interactivity at sixteen rovers with hundreds of candidate links requires
+discipline about draw calls, so the render layer is \emph{instanced
+everything}: one draw call per system regardless of fleet size.
+
+All radio links, candidate, kept, breaking, and widest-path, are drawn by
+a single shader-drawn ribbon mesh. Each link is a 24-segment quadratic arc
+whose style is selected per instance: candidate links are faint, kept
+links solid, breaking links flicker at 14~Hz to draw the eye, and the
+widest-path tree is highlighted with animated packet flow moving toward
+the root, giving an immediate read on where the network's bottlenecks
+currently are. One additional instanced draw renders all ground decals:
+contact shadows, communication-range rings, the selection ring, fault
+glows, and beacon pads. Task beacons are a further instanced mesh.
+
+The fleet itself is drawn as one instanced mesh per body part plus wheel
+groups. The default rover model is procedural, with dimensions taken from
+the physics simulator's rover description: a chassis of $0.9 \times 0.65
+\times 0.25$~m on 0.16~m wheels, so the browser robot matches the simulated
+robot rather than an artist's impression. A custom vertex-attribute PBR
+technique bakes color, roughness, and metalness into vertex data,
+collapsing what would conventionally be a multi-material, multi-draw model
+into a single draw call for the entire body. Users can also import their
+own GLB rover models; imports are validated against 24~MB and
+250{,}000-triangle limits, wheels are detected by node name, and the model
+is normalized to the standard footprint so a user-supplied robot obeys the
+same kinematics as the default.
+
+The camera offers orbit, top-down, follow, and chase modes with smooth
+glides between them, switched from the keyboard (keys 1 to 4; space pauses
+the mission). The view frustum's ground footprint is projected into an
+RTS-style north-up minimap, so the user can see both what the main camera
+covers and where every rover sits. Three quality tiers adapt rendering
+cost to the hardware: high enables MSAA, ambient occlusion, and bloom;
+balanced uses SMAA with bloom; low disables postprocessing entirely. A
+performance monitor demotes the tier automatically when frame times sag,
+and promotes it again when headroom returns.
+
+\fillme{performance capture: fps and draw calls at 16 rovers on the high quality tier}
+
+\subsection{State, Planner Loop, and User Interface}
+
+Application state lives in a single Zustand store holding a 240-cycle
+history ring, which backs the rolling charts without unbounded memory
+growth. The planner loop keeps exactly one request in flight at an
+adaptive cadence, 1.6~s by default; when the server reports congestion it
+backs off exponentially to 8~s rather than piling requests onto a busy
+backend. Independently, telemetry is copied into the store at 5~Hz so the
+HUD stays fluid even while the planner is mid-cycle.
+
+The interface comprises a top bar; a mission panel with tabs for mission
+presets, comparisons and fault injection, tuning sliders annotated with
+their scope notes and graph-theory advisories (for example warning when a
+degree cap threatens connectivity), and view, quality, and model-import
+controls; a mission strip showing live statistics, including bootstrap
+confidence intervals over paired cycles, rolling sparklines, and
+plain-language significance wording in place of raw $p$-values; a
+per-rover roster whose heading-up radar canvases plot each rover's
+estimated trust against the hidden ground-truth reliability, exposing how
+fast the trust model converges after a fault; and the north-up minimap.
+Faults injected from the panel, reliability drop, battery drain, or packet
+loss spike, take effect in the primary and every follower simulation at
+the same cycle, preserving the paired design.
+
+\fillme{link or QR code to a demo video}
+
+\subsection{Planned Engine Extensions}
+
+The engine is functional but incomplete, and we close with the three
+extensions we consider most valuable, in priority order.
+
+\paragraph{WebSocket streaming for mid-cycle telemetry.}
+The current poll-per-cycle design hides everything that happens inside a
+solve. A WebSocket channel would stream intermediate annealer energies,
+trust updates, and assignment proposals as they occur, turning the console
+into an instrument for observing solver dynamics rather than only their
+endpoints.
+
+\paragraph{Session persistence and mission replay.}
+Sessions currently evaporate with their 600~s TTL. Recording the full
+request and response stream would support resuming interrupted sessions
+and replaying missions deterministically, which would also simplify
+regression testing of the client against recorded server behavior.
+
+\paragraph{Motion command publishing.}
+At present the physics simulator and the browser engine run separate world
+models with matched parameters. Publishing motion commands from one engine
+to the other, so both drive the same rovers, would remove the residual
+risk of kinematic divergence and enable mixed-reality demonstrations in
+which simulated and browser-rendered fleets interleave.

@@ -1,0 +1,273 @@
+\section{Trust Modeling and the Trust-Aware GNN}
+\label{sec:trustgnn}
+
+This chapter describes the learning and inference components that sit on top
+of the pruned communication graph produced by the QUBO layer. The design
+centers on a per-node trust model that converts observed mission outcomes
+into a slowly evolving reputation signal, and a lightweight graph neural
+network that scores candidate rovers against task requirements using exactly
+the pruned topology as its input graph. We first state the deployment
+constraint that shapes every architectural choice, then describe the node
+features, the trust model, the message-passing layer, the assignment rule,
+and finally the empirical evidence: what the trust model tracks, what the
+GNN contributes, and where our training attempt produced an honest null
+result.
+
+\subsection{Deployment constraint: mist, fog, and cloud tiers}
+
+The target platform is a three-tier architecture. Rovers and their immediate
+wireless neighbors form the mist tier; a nearby relay or base station with
+Raspberry Pi class hardware forms the fog tier; and an offboard server with
+unbounded compute forms the cloud tier. This split imposes a hard asymmetry
+on the learning system. Training, which requires storing trajectories,
+running many epochs of gradient updates, and evaluating held-out folds,
+happens exclusively in the cloud tier. The fog tier, where assignment
+decisions must be made under latency and power budgets, only
+\emph{evaluates} the model. Every forward pass on the fog tier must fit in
+the memory and instruction budget of a small single-board computer, and must
+not depend on any deep learning framework.
+
+Consequently, the entire inference path is implemented in pure NumPy with
+tiny dense matrices. Node feature vectors have four components; hidden
+states have the same dimensionality as the node count, which in our missions
+never exceeds the low tens; and the message-passing round is a single
+matrix-vector product followed by an elementwise nonlinearity. There are no
+learned embeddings, no attention heads, and no multi-layer stacks. This is a
+deliberate restriction: the question we ask is not how expressive a GNN we
+can afford, but whether a minimal one-round architecture already captures
+the neighborhood information that matters for task allocation.
+
+\subsection{Node features}
+
+Each rover is described by a four-dimensional feature vector, with every
+component normalized to the interval $[0,1]$ so that weights in the scoring
+head are directly comparable. Table~\ref{tab:nodefeatures} lists the
+features.
+
+\begin{table}[t]
+  \centering
+  \caption{Node features used by the trust-aware GNN. All values are
+  normalized to $[0,1]$ and refreshed every mission cycle.}
+  \label{tab:nodefeatures}
+  \begin{tabular}{lll}
+    \toprule
+    Feature & Definition & Interpretation \\
+    \midrule
+    Trust & EWMA reputation from the trust model & Expected task reliability \\
+    Battery & Current charge relative to capacity & Energy headroom \\
+    Available compute & $1 - \text{load}$ & Free processing capacity \\
+    Capability & Hardware class, normalized & Sensor and actuator quality \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Three of the four features are straightforward instrumentation: battery is
+read from the power subsystem, available compute is one minus the current
+scheduling load, and capability is a static property of the rover's hardware
+class. The fourth feature, trust, is the output of the trust model described
+next, and it is the component that couples inference across mission cycles.
+
+\subsection{The trust model}
+
+The trust model maintains a scalar reputation per node, updated once per
+mission cycle from two evidence sources: the observed outcomes of tasks the
+node was assigned, and link-level evidence gathered from communication with
+the node. Updates follow an exponential weighted moving average, so recent
+outcomes dominate the estimate while older outcomes decay geometrically. Two
+additional mechanisms keep the estimate well behaved in a dynamic network.
+First, \emph{trust aging} lets evidence fade over time even in the absence
+of new observations, so that a rover that has been silent for many cycles
+drifts toward a neutral prior rather than retaining a stale extreme rating.
+Second, a \emph{relax} operation handles nodes that received no assignment
+in a cycle: since no outcome can be observed for them, their trust is
+nudged toward the prior instead of being left frozen, which prevents
+unassigned nodes from being permanently locked out or permanently
+privileged by an old rating.
+
+The trust estimate closes the loop between cycles. It feeds the next cycle
+in two places simultaneously: as the trust component of the QUBO edge
+features, where it influences which communication links survive pruning, and
+as the trust component of the GNN node features, where it influences which
+rovers are scored highly for which tasks. A rover that performs well is
+therefore both more likely to remain well connected and more likely to be
+assigned work, and the reverse holds for a rover that fails. This coupling
+is intentional, but it also means that errors in the trust estimate
+propagate, which is why we measure its quality directly.
+
+The ground truth in our simulator is a hidden, spatially correlated
+reliability field per node; observed outcomes are sampled from it. We
+measure how well the trust model tracks this hidden quantity using the
+Spearman rank correlation between estimated trust and true reliability
+across nodes, computed per cycle. Trust tracks reliability closely, and the
+benefit is causal rather than merely correlational: enabling trust updates,
+as opposed to freezing trust at its initial stale value, yields a per-cycle
+staleness margin of $+13.75$ percentage points in mission success. Fresh
+trust estimates are therefore not a cosmetic refinement; they are a major
+contributor to end-to-end performance.
+
+\subsection{One round of message passing on the pruned graph}
+
+The GNN layer performs exactly one round of message passing, and it operates
+\emph{only on the pruned graph}. The edge set selected by the QUBO layer is
+literally the input graph of the GNN: links that were pruned away carry no
+messages, regardless of how physically close the two rovers are. This
+coupling is the defining feature of our pipeline. The QUBO layer decides
+which information pathways exist, and the GNN layer decides what to conclude
+from the information that flows along them.
+
+Formally, let $A$ be the weighted adjacency of the pruned graph, with edge
+weights derived from link quality and trust, and let $x_i \in [0,1]^4$ be
+the feature vector of node $i$. The hidden state of node $i$ after one round
+is
+\begin{equation}
+  h_i = \sigma\!\left( W_{\mathrm{self}}\, x_i
+    + \sum_{j \in \mathcal{N}(i)} a_{ij}\, W_{\mathrm{agg}}\, x_j \right),
+  \label{eq:messagepassing}
+\end{equation}
+where $\sigma$ is the elementwise sigmoid, $\mathcal{N}(i)$ is the neighbor
+set in the pruned graph, $a_{ij}$ is the adjacency weight of the surviving
+edge, and $W_{\mathrm{self}}, W_{\mathrm{agg}} \in \mathbb{R}^{4 \times 4}$
+are configurable weight matrices. A readout layer then scores each
+(node, task) pair by comparing the hidden state against the task's
+requirement vector, producing a scalar suitability score per pair.
+Figure~\ref{fig:messagepassing} illustrates one round on a small pruned
+graph.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      node distance=10mm and 14mm,
+      rover/.style={circle, draw, minimum size=8mm, inner sep=0pt, font=\small},
+      op/.style={rectangle, rounded corners, draw, minimum width=16mm,
+        minimum height=8mm, font=\small},
+      score/.style={rectangle, draw, minimum width=14mm, minimum height=8mm,
+        font=\small},
+      edge/.style={-{Stealth[length=2mm]}, thick},
+      pruned/.style={dashed, gray},
+      lbl/.style={font=\footnotesize\itshape}
+    ]
+    % Source nodes (pruned graph neighborhood)
+    \node[rover] (v0) {$v_0$};
+    \node[rover, above right=of v0] (v1) {$v_1$};
+    \node[rover, below right=of v0] (v2) {$v_2$};
+    \node[rover, right=of v2, gray] (v3) {$v_3$};
+
+    % Aggregation and readout
+    \node[op, right=24mm of v0] (agg) {aggregate};
+    \node[op, right=12mm of agg] (sig) {$\sigma(\cdot)$};
+    \node[op, right=12mm of sig] (read) {readout};
+    \node[score, right=12mm of read] (s) {scores};
+
+    % Surviving edges
+    \draw[edge] (v1) -- node[lbl, above, sloped] {$a_{10}\,x_1$} (agg);
+    \draw[edge] (v2) -- node[lbl, below, sloped] {$a_{20}\,x_2$} (agg);
+    \draw[edge] (v0) -- node[lbl, above] {$W_{\mathrm{self}}\,x_0$} (agg);
+    \draw[edge] (agg) -- (sig);
+    \draw[edge] (sig) -- node[lbl, above] {$h_0$} (read);
+    \draw[edge] (read) -- node[lbl, above] {task req.} (s);
+
+    % Pruned edge: v3 was cut by the QUBO layer
+    \draw[pruned] (v3) -- node[lbl, above, sloped] {pruned} (agg);
+
+    % Stage labels
+    \node[lbl, above=6mm of v1] {pruned graph};
+    \node[lbl, above=6mm of agg] {one round};
+    \node[lbl, above=6mm of s] {(node, task)};
+  \end{tikzpicture}
+  \caption{One message-passing round for node $v_0$ on a pruned graph.
+  Neighbors $v_1$ and $v_2$ survive QUBO pruning and contribute weighted
+  features to the aggregation; the link to $v_3$ was pruned and carries no
+  message. The aggregated signal passes through a sigmoid and a readout
+  that scores the node against task requirements.}
+  \label{fig:messagepassing}
+\end{figure}
+
+The default weight matrices are set by hand to implement the intended
+allocation policy: prefer rovers with high trust, high battery, low load
+(that is, high available compute), and a strong, trustworthy neighborhood.
+The neighborhood term is what distinguishes the GNN from a purely per-node
+scorer: a rover adjacent to reliable partners inherits some of their
+credibility, which is exactly the bias we want when task success depends on
+multi-hop delivery through the pruned topology.
+
+\subsection{Assignment rule}
+
+Scores are converted into assignments by a capacity-aware greedy matching.
+Pairs are considered in decreasing order of score; a pair is accepted if the
+rover still has free capacity and the task is still unassigned. The default
+capacity is one task per node per cycle, which matches the hardware
+assumption that a rover executes one mission task at a time. Greedy matching
+is not optimal in general, but it is fast, deterministic given the scores,
+and easy to audit, and our baselines use the same matching rule so that
+comparisons isolate the scoring functions rather than the matcher.
+
+\subsection{Cloud readout training: a null result}
+
+Although the fog tier only evaluates, the readout layer can be trained
+offline in the cloud tier on trajectories collected from past missions, and
+the trained weights can then be shipped back to the fog tier. We implemented
+this and evaluated it on held-out missions. The result is a genuine null:
+the trained readout did not outperform the fixed hand-set weights. The
+measured difference was approximately $-3.9$ percentage points of mission
+success in favor of the fixed weights, with a paired permutation $p$-value
+of $0.49$, well within noise. We report this as a null result rather than
+discarding it. Our interpretation is twofold. First, with only four input
+features and a one-round architecture, the hand-set policy already sits near
+the ceiling of what the model class can express, so gradient training has
+little room to add and ample room to overfit the training missions. Second,
+the dominant signal, trust, is computed upstream by the trust model; the
+readout mostly has to avoid corrupting it. We therefore ship the fixed
+weights and keep cloud training as an optional, disabled path.
+
+\subsection{Ablation: what actually carries the performance}
+
+To attribute mission success to the right component, we ran a four-arm
+ablation on 10-rover missions with paired statistics across seeds. The arms
+are the full pipeline (GNN scoring on the pruned graph), a no-graph readout
+that scores nodes from their own features without message passing, a
+trust-only arm that scores nodes by trust alone, and random assignment.
+Table~\ref{tab:ablation} reports the results.
+
+\begin{table}[t]
+  \centering
+  \caption{Ablation on 10-rover missions. Mission success rates with paired
+  statistics against the full GNN pipeline: bootstrap 95\% confidence
+  intervals on the success-rate difference and permutation $p$-values.
+  The no-graph difference is not statistically significant.}
+  \label{tab:ablation}
+  \begin{tabular}{lllll}
+    \toprule
+    Arm & Success & $\Delta$ vs.\ GNN (pp) & 95\% CI & $p$ \\
+    \midrule
+    GNN (full pipeline) & 39.8\% & $0$ & & \\
+    No-graph readout & 38.1\% & $+1.7$ & not significant & n.s. \\
+    Trust-only & 31.7\% & $+8.13$ & $[+4.2,\, +11.7]$ & $0.016$ \\
+    Random & 26.0\% & $+13.8$ & & \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+Three conclusions follow. First, the full pipeline beats trust-only scoring
+by $+8.13$ percentage points, with a bootstrap 95\% confidence interval of
+$[+4.2, +11.7]$ and a permutation $p$-value of $0.016$: the feature mix and
+the gating structure deliver a real, statistically supported gain over using
+trust alone. Second, the pipeline beats random assignment by $+13.8$
+percentage points, confirming that the system extracts substantial signal
+from the features at all. Third, and most instructive, the gap between the
+GNN and the no-graph readout is only $+1.7$ percentage points and is
+\emph{not} statistically significant. The single message-passing round on
+the pruned graph does not measurably improve over per-node scoring at this
+mission scale.
+
+We state this plainly rather than softening it: at the scale we tested, the
+heavy lifting is done by the trust model and by the gating of assignment
+through the pruned topology, not by neighborhood aggregation itself. The
+trust model's $+13.75$ point staleness margin and the $+8.13$ point margin
+over trust-only scoring are the load-bearing results of this chapter. The
+GNN layer contributes a principled way to fuse features and a natural
+interface to the QUBO-pruned graph, and it may matter more at larger scales
+or in missions where multi-hop delivery dominates; whether it does is an
+empirical question we leave to the scaling experiments. What the present
+evidence supports is a system whose intelligence is concentrated in a simple,
+auditable trust estimate, with the neural component acting as a restrained
+and honest scoring head on top of it.

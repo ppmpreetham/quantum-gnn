@@ -1,0 +1,385 @@
+\section{Background and Foundations}\label{ch:background}
+
+This chapter collects the mathematical and algorithmic machinery on which the
+rest of the report rests. Our aim is not to survey any single field
+exhaustively, but to build a shared vocabulary: what a dynamic rover network
+is, why its task-allocation problem is combinatorial, how the QUBO form
+encodes that problem, which solvers we use to attack it, and how we judge the
+answers with exact methods and statistics. Each later chapter cites back to
+the definitions given here.
+
+\subsection{Dynamic Graphs and Rover Networks}
+
+We model the fleet at any instant as an undirected graph
+$G_t = (V, E_t)$, where each vertex $v \in V$ is a rover and an edge
+$\{u, v\} \in E_t$ exists whenever rovers $u$ and $v$ are within radio range
+of one another. Because the rovers move, the edge set $E_t$ changes from
+cycle to cycle: rovers that could exchange messages one minute may be out of
+range the next, and links appear or vanish as the fleet spreads out, regroups,
+or loses a rover to a fault. A graph whose edge set is a function of time in
+this sense is a \emph{dynamic graph}.
+
+Dynamism has three practical consequences for our project. First, decisions
+are perishable: a routing or allocation plan computed on $G_t$ may be invalid
+on $G_{t+1}$ even if no rover has failed, simply because the topology moved
+on. Second, every decision must be recomputed on a deadline; a solver that is
+exact but too slow is useless if the graph has changed by the time it
+finishes. Third, information is local and stale: a rover knows its own state
+precisely but learns about distant rovers only through relayed messages, so
+any score or estimate carried through the network has a freshness that
+decays with time. The pipeline in this project is built around these three
+facts. Each cycle takes the current graph $G_t$, prunes it to a sparser
+subgraph that still supports the mission, scores the rovers on the pruned
+graph, assigns tasks, and folds the observed outcomes back into a trust model
+that shapes the next cycle's decisions.
+
+Two features of the graph matter throughout. The first is
+\emph{connectivity}: a pruned subgraph is useful only if every rover that
+must receive a task remains reachable from a designated root rover, which we
+formalize below as a flow requirement. The second is \emph{degree}: a rover
+with a low-power radio cannot maintain arbitrarily many simultaneous links,
+so each vertex carries a degree limit. Both features are hard constraints,
+not preferences, and they drive the constrained optimization formulation of
+the next section.
+
+\subsection{Constrained Combinatorial Optimization and the QUBO Form}
+
+Many planning problems ask us to choose a subset of objects (edges, routes,
+assignments) that maximizes some utility while respecting limits (budget,
+capacity, connectivity). Because the choices are discrete, these are
+\emph{combinatorial optimization} problems, and most interesting instances
+are NP-hard: no algorithm is known that solves every instance in time
+polynomial in the input size.
+
+A quadratic unconstrained binary optimization problem, or \emph{QUBO}, is the
+following canonical form. Let $z \in \{0,1\}^n$ be a vector of binary
+decision variables, $Q \in \mathbb{R}^{n \times n}$ a symmetric matrix, and
+$c \in \mathbb{R}$ a constant offset. The objective is
+\begin{equation}\label{eq:qubo}
+  E(z) \;=\; z^{\top} Q z + c
+  \;=\; \sum_{i} Q_{ii}\, z_i \;+\; \sum_{i<j} Q_{ij}\, z_i z_j \;+\; c,
+\end{equation}
+and we seek $z^{\star} = \arg\min_z E(z)$. The diagonal entries $Q_{ii}$
+price each variable on its own; the off-diagonal entries $Q_{ij}$ price
+pairs, rewarding or penalizing the co-selection of $i$ and $j$. Since $z_i^2
+= z_i$ for binary variables, linear terms fold into the diagonal. The QUBO
+form is attractive for two reasons: it is the native input format of quantum
+annealers and of most generic binary samplers, and it forces the modeler to
+make every trade-off explicit as a number in one matrix.
+
+\subsubsection{Penalty encoding of hard constraints}
+
+A QUBO is \emph{unconstrained}, so the hard constraints of the underlying
+problem must be folded into the objective. The standard device is a
+\emph{penalty term}: for each constraint, we add to $Q$ a quadratic form
+that is zero exactly when the constraint holds and is strongly positive
+otherwise. For example, a degree limit $\sum_{j \sim i} z_{ij} \le d_i$ at
+vertex $i$ becomes a penalty $P \bigl(\max\{0, \sum_{j \sim i} z_{ij} -
+d_i\}\bigr)^2$ after introducing integer slack variables, themselves encoded
+as a short binary expansion. In this project we encode four constraint
+families this way: per-rover degree limits, a global edge budget, single-commodity
+flow conservation for connectivity, and flow capacity on each edge.
+
+The penalty weight $P$ must be chosen so that \emph{breaking a constraint is
+never worth it}. Formally, let $\Delta_{\text{soft}}$ be the largest possible
+swing of the soft (constraint-free) part of the objective between any two
+candidate solutions, and let $g_{\min} > 0$ be the smallest nonzero violation
+of any constraint. Then any $P > \Delta_{\text{soft}} / g_{\min}$ guarantees
+that every minimizer of $E$ is feasible. If $P$ is too small, the sampler
+will happily buy soft utility at the price of an infeasible graph; if $P$ is
+needlessly huge, the penalty terms flatten the energy landscape into
+plateaus separated by cliffs, which slows heuristic search. In this project
+the soft terms are normalized so that one selected edge is worth at most
+about one unit of utility, while a single constraint violation costs at
+least $100$ units. The gap of two orders of magnitude places every feasible
+solution strictly below every infeasible one, and our invariant tests verify
+this dominance property directly on the assembled matrix $Q$.
+
+\subsection{Simulated and Quantum Annealing}
+
+\subsubsection{Simulated annealing}
+
+Simulated annealing (SA) is a local-search heuristic inspired by the slow
+cooling of a solid. Starting from an initial candidate $z$, it repeats the
+following move: propose a neighbor $z'$ (for instance by flipping one bit),
+compute the energy change $\Delta E = E(z') - E(z)$, and accept the move
+with the \emph{Metropolis criterion}
+\begin{equation}\label{eq:metropolis}
+  \Pr(\text{accept}) \;=\;
+  \begin{cases}
+    1, & \Delta E \le 0,\\[2pt]
+    \exp(-\Delta E / T), & \Delta E > 0,
+  \end{cases}
+\end{equation}
+where $T$ is a control parameter called the \emph{temperature}. Downhill
+moves are always taken; uphill moves are taken with a probability that
+shrinks both with the size of the climb and as $T$ falls. High temperature
+early in the run lets the search wander across valleys and escape shallow
+local minima; low temperature late in the run freezes it into a local
+minimum, ideally a deep one. The schedule $T_k = T_0 \, r^{k}$ with cooling
+rate $r$ slightly below one is the workhorse choice and the one used
+throughout this project; Figure~\ref{fig:annealing-schedule} shows the
+shape. Because a single run is a gamble on its starting point, practical
+implementations use \emph{restarts}: several independent runs from different
+initial states, keeping the best result. All annealers in this report also
+expose a random seed, which lets us reproduce every experiment exactly.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}
+    \begin{axis}[
+        width=0.8\textwidth,
+        height=5.2cm,
+        xlabel={sweep $k$},
+        ylabel={temperature $T_k$},
+        xmin=0, xmax=400,
+        ymin=0, ymax=1.05,
+        grid=both,
+        grid style={gray!20},
+        legend style={at={(0.97,0.95)}, anchor=north east, font=\small},
+      ]
+      \addplot[domain=0:400, samples=120, thick, color=blue!70!black]
+        {exp(-0.008*x)};
+      \addlegendentry{$r = 0.992$ (slower cooling)}
+      \addplot[domain=0:400, samples=120, thick, color=red!70!black, dashed]
+        {exp(-0.025*x)};
+      \addlegendentry{$r = 0.975$ (faster cooling)}
+    \end{axis}
+  \end{tikzpicture}
+  \caption[Illustrative exponential temperature decay schedules]{Illustrative
+  exponential cooling schedules $T_k = T_0\, r^k$ with $T_0 = 1$ for two
+  cooling rates. Slower cooling explores longer before freezing; faster
+  cooling reaches low temperatures sooner but risks quenching into a poor
+  local minimum. The curves are schematic and do not correspond to a specific
+  solver run.}
+  \label{fig:annealing-schedule}
+\end{figure}
+
+Plain bit-flip SA on a penalty-laden QUBO has a structural weakness: most
+bit strings are infeasible, and penalty cliffs separate feasible regions, so
+a random walk spends its budget among infeasible states. This observation
+motivates the \emph{projected} annealer developed later in this report,
+whose moves live entirely in the space of feasible edge sets. Chapter~4
+describes it; here we note only that the Metropolis rule is unchanged and
+the projection enters in how neighbors are proposed.
+
+\subsubsection{Quantum annealing and simulated quantum annealing}
+
+Quantum annealing replaces thermal hopping over energy barriers with quantum
+tunneling through them. Physically, a system of coupled qubits is prepared
+in the ground state of a simple \emph{driver} Hamiltonian and then slowly
+morphed into a \emph{problem} Hamiltonian whose ground state encodes the
+QUBO optimum; if the evolution is slow enough and hardware noise permits,
+the system ends in or near the optimum. We do not have quantum hardware in
+this project. Instead we use \emph{simulated quantum annealing} (SQA), a
+classical path-integral Monte Carlo method that mimics the quantum system:
+the bit string is replicated into several coupled \emph{Trotter slices},
+and a transverse field parameter plays the role of temperature, being
+annealed downward over the run. SQA runs on ordinary hardware and, like
+thermal SA, offers no optimality certificate, so it enters our study as one
+more sampler to audit, alongside a local bit-flip SA we implement ourselves,
+a production-grade SA library, and a tabu search library.
+
+\subsection{Mixed-Integer Linear Programming and Exact Ground Truth}
+
+Heuristic samplers tell us the best energy they found; they never tell us
+how far that energy is from the true optimum. To measure that gap we need an
+exact solver, and ours comes from \emph{mixed-integer linear programming}
+(MILP). A MILP minimizes a linear objective subject to linear constraints,
+with some variables required to be integer. The workhorse algorithm is
+branch and bound with linear-programming relaxations, and we use the open
+source solver CBC through a Python modeling layer.
+
+Two exact models serve as ground truth in this project. The first is a MILP
+of the original edge-selection problem itself, with binary edge variables,
+integer slacks, and continuous flow variables. The second is an exact solve
+of the assembled QUBO matrix via the standard linearization: each quadratic
+term $z_i z_j$ with $Q_{ij} \neq 0$ is replaced by an auxiliary binary
+variable $y_{ij}$ plus the constraints $y_{ij} \le z_i$,
+$y_{ij} \le z_j$, and $y_{ij} \ge z_i + z_j - 1$, which force
+$y_{ij} = z_i z_j$ at any binary assignment. Both models are small enough at
+our test scales for CBC to prove optimality outright, and we count a solve as
+valid only when CBC certifies it; otherwise the instance is skipped rather
+than trusted.
+
+One subtlety makes the first model exact despite its continuous flows. A
+single-commodity flow formulation that ships one unit of demand from a root
+to each required vertex has, for integer demands, an \emph{integral}
+polytope: every extreme point of its feasible region assigns integer flow
+values. Intuitively, the flow polytope is the intersection of conservation
+equations whose constraint matrix is totally unimodular, so relaxing
+integrality of the flows changes nothing about the optimum. We may therefore
+declare flow variables continuous, which keeps the model small and lets CBC
+solve it in milliseconds, while losing no exactness. We verified this
+empirically as well: the MILP optimum coincides with brute-force enumeration
+of all feasible edge subsets on every small instance we tested.
+
+\subsection{Message-Passing Graph Neural Networks}
+
+A graph neural network (GNN) computes vector representations of vertices by
+repeatedly mixing each vertex's features with those of its neighbors. One
+\emph{message-passing round} for vertex $i$ with feature vector
+$x_i \in \mathbb{R}^d$ on a graph with weighted adjacency
+$A = (a_{ij})$ is
+\begin{equation}\label{eq:message-passing}
+  h_i \;=\; \sigma\!\Bigl( W_{\text{self}}\, x_i \;+\;
+  \sum_{j \in \mathcal{N}(i)} a_{ij}\, W_{\text{nbr}}\, x_j \Bigr),
+\end{equation}
+where $W_{\text{self}}$ and $W_{\text{nbr}}$ are learned or hand-set weight
+matrices, $\mathcal{N}(i)$ is the neighbor set of $i$, and $\sigma$ is the
+elementwise sigmoid $\sigma(t) = 1/(1 + e^{-t})$, which squashes its input
+into $(0,1)$. The hidden state $h_i$ now carries information about the
+one-hop neighborhood. Stacking more rounds propagates information farther,
+at the price of smoothing and compute; this project uses a single round,
+which is cheap enough for a low-power onboard computer and suffices because
+the pruning stage has already removed most long-range redundancy from the
+graph. A final \emph{readout} maps hidden states to per-vertex scores that
+rank rovers for task assignment. Figure~\ref{fig:message-passing} sketches
+one round.
+
+\begin{figure}[htbp]
+  \centering
+  \begin{tikzpicture}[
+      node/.style={circle, draw, thick, minimum size=7mm, inner sep=1pt},
+      lab/.style={font=\small},
+      every path/.style={thick},
+    ]
+    % left: graph
+    \node[node, fill=blue!15] (u) at (0,0) {$i$};
+    \node[node] (v1) at (-1.5,1.2) {$j_1$};
+    \node[node] (v2) at (-1.8,-0.2) {$j_2$};
+    \node[node] (v3) at (-1.2,-1.4) {$j_3$};
+    \draw[-{Stealth}, color=red!70!black] (v1) -- (u);
+    \draw[-{Stealth}, color=red!70!black] (v2) -- (u);
+    \draw[-{Stealth}, color=red!70!black] (v3) -- (u);
+    \node[lab] at (-0.9,1.0) {$a_{i j_1}$};
+    \node[lab] at (-1.35,-1.05) {$a_{i j_3}$};
+    \node[lab, align=center] at (0,-1.0) {aggregate weighted\\neighbor features};
+
+    % arrow
+    \draw[-{Stealth}, line width=1.2pt] (0.9,0) -- (2.1,0)
+      node[midway, above, lab] {$W_{\text{self}},\, W_{\text{nbr}}$};
+
+    % middle: combine
+    \node[draw, thick, circle, minimum size=8mm] (sum) at (2.9,0) {$+$};
+    \node[lab, align=center] at (2.9,-1.0) {combine with\\own features};
+
+    \draw[-{Stealth}, line width=1.2pt] (3.6,0) -- (4.6,0)
+      node[midway, above, lab] {$\sigma$};
+
+    % right: hidden state
+    \node[node, fill=green!20, minimum size=9mm] (h) at (5.4,0) {$h_i$};
+    \node[lab, align=center] at (5.4,-1.0) {hidden state,\\then readout score};
+  \end{tikzpicture}
+  \caption[One message-passing round of the trust-aware GNN]{One
+  message-passing round. Vertex $i$ collects the feature vectors of its
+  neighbors on the pruned graph, weighted by link strengths $a_{ij}$,
+  combines them with its own features, applies the sigmoid nonlinearity, and
+  obtains its hidden state $h_i$, from which a readout produces the rover
+  score.}
+  \label{fig:message-passing}
+\end{figure}
+
+In our setting the input features are trust, battery level, available
+compute, and capability, and the adjacency weights come from the pruned
+topology. Two properties of this design matter later. First, the model is
+purely feed-forward arithmetic on small matrices, so it runs in microseconds
+per rover and imposes essentially no load on the fog tier. Second, because
+scoring happens \emph{after} pruning, the GNN's view of the world is exactly
+the communication graph the mission will actually use, which ties allocation
+quality causally to pruning quality.
+
+\subsection{Trust Models for Multi-Agent Systems}
+
+A rover that has failed silently, or whose radio is degrading, should receive
+fewer critical tasks, even if it looks attractive on paper. Trust models make
+this notion quantitative. Following the trust literature, notably the survey
+of Sabater and Sierra (2005), we treat trust as a reputation score built
+from direct interaction outcomes, updated incrementally, and allowed to age.
+
+Our model is an exponentially weighted moving average (EWMA). Each rover $i$
+carries a scalar trust $\tau_i \in [0,1]$. When rover $i$ is observed
+succeeding ($o = 1$) or failing ($o = 0$) on a task, its trust updates as
+\begin{equation}\label{eq:ewma}
+  \tau_i \leftarrow (1 - \alpha)\,\tau_i + \alpha\, o,
+\end{equation}
+with learning rate $\alpha \in (0,1)$. Recent evidence dominates: a single
+bad outcome lowers trust immediately, while recovery requires a run of
+successes, which is the asymmetry we want for mission-critical assignment.
+Complementing the update is \emph{aging}: trust that has not been refreshed
+by a recent observation relaxes toward a neutral prior, so stale evidence
+counts for less and a long-unobserved rover is neither trusted nor
+distrusted outright. Trust feeds the pipeline in two places, as a vertex
+feature for the GNN and as an edge feature for the pruning stage, so
+reputation influences both which links survive and which rovers are chosen.
+
+\subsection{Statistical Tools Used Throughout the Report}
+
+Because every experiment involves random seeds, hidden reliability draws, and
+stochastic solvers, single-run numbers mean little. We rely on four tools.
+
+\paragraph{Paired bootstrap confidence intervals.} To compare two methods
+run on the same seeds, we form the per-seed difference in the metric of
+interest, resample the differences with replacement $10{,}000$ times, and
+take the $2.5$ and $97.5$ percentiles of the resampled means as a $95\%$
+confidence interval. Pairing on seeds removes instance-difficulty variance
+and sharpens the comparison.
+
+\paragraph{Permutation tests.} For a $p$-value we use an exact-style
+permutation test on the paired differences: under the null hypothesis that
+the two methods are exchangeable, the sign of each difference is arbitrary,
+so we flip signs at random across $20{,}000$ permutations and measure how
+often the permuted mean is at least as extreme as the observed one. This
+makes no normality assumption.
+
+\paragraph{Spearman rank correlation.} When we ask whether a predicted score
+orders rovers the way realized outcomes do, we use Spearman's rank
+correlation, which compares orderings rather than values and is therefore
+robust to the arbitrary scale of the scores.
+
+\paragraph{Normalized optimality gap.} To grade a sampler against exact
+ground truth $H^{\star}$, we report
+\begin{equation}\label{eq:normgap}
+  \text{gap} \;=\; \frac{H_{\text{SA}} - H^{\star}}{\max\bigl(1,\; |H^{\star}|\bigr)},
+\end{equation}
+which is nonnegative since $H^{\star}$ is minimal, equals zero exactly when
+the sampler is optimal, and is protected from division blow-ups when the
+optimal energy is near zero.
+
+\subsection{Notation}
+
+Table~\ref{tab:notation} summarizes the symbols used in this chapter and
+throughout the report.
+
+\begin{table}[htbp]
+  \centering
+  \caption[Notation used in this report]{Notation used in this chapter and
+  throughout the report.}
+  \label{tab:notation}
+  \small
+  \begin{tabular}{@{}ll@{}}
+    \toprule
+    Symbol & Meaning \\
+    \midrule
+    $G_t = (V, E_t)$ & dynamic rover graph at cycle $t$ \\
+    $z \in \{0,1\}^n$ & binary decision vector (one bit per optional edge) \\
+    $Q,\, c$ & QUBO matrix and constant offset in $E(z) = z^{\top} Q z + c$ \\
+    $P$ & penalty weight for a hard-constraint violation \\
+    $T_k,\, r$ & annealing temperature at sweep $k$ and cooling rate \\
+    $\Delta E$ & energy change of a proposed move \\
+    $H_{\text{SA}},\, H^{\star}$ & sampler energy and exact optimal energy \\
+    $x_i,\, h_i$ & input features and hidden state of vertex $i$ \\
+    $a_{ij}$ & weight of the edge between vertices $i$ and $j$ \\
+    $W_{\text{self}},\, W_{\text{nbr}}$ & GNN weight matrices for self and neighbor terms \\
+    $\sigma$ & sigmoid nonlinearity, $\sigma(t) = 1/(1+e^{-t})$ \\
+    $\tau_i$ & EWMA trust score of rover $i$ \\
+    $\alpha$ & trust learning rate \\
+    $d_i$ & degree limit of rover $i$ \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+With these foundations in place, the next chapter makes the problem precise:
+given $G_t$ and the current trust state, choose the subgraph, the rover
+scores, and the task assignment that maximize expected mission success under
+degree, budget, and connectivity constraints.

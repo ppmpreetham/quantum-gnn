@@ -1,0 +1,366 @@
+\section{The Constrained QUBO Formulation}
+\label{sec:qubo}
+
+This chapter presents the mathematical core of our pipeline: the reduction of
+dynamic edge pruning to a constrained quadratic unconstrained binary
+optimisation (QUBO) problem. Each cycle of the simulation begins with a
+candidate communication graph that may contain far more links than the rovers
+can actively maintain. We wish to keep a small, high-quality, connected
+subgraph on which the trust-aware inference of the following chapters then
+operates. The QUBO formalism is attractive for this task because it accepts
+both linear utility terms and pairwise interaction terms natively, because it
+is the input format of quantum and quantum-inspired annealing hardware, and
+because it forces us to state every modelling decision as an explicit,
+auditable term in a single energy function. The price we pay is that all hard
+constraints must be expressed as penalty terms, and Section~\ref{sec:penalties}
+shows how we make those penalties provably dominant.
+
+\subsection{Candidate edges and features}
+
+Let $V = \{1, \dots, n\}$ be the set of rovers and let $E_{\mathrm{cand}}
+\subseteq V \times V$ be the set of candidate edges, that is, pairs of rovers
+currently within communication range. Every candidate edge
+$e = (i, j) \in E_{\mathrm{cand}}$ is described by a feature vector
+$\mathbf{f}_e \in [0,1]^7$ whose components are listed in
+Table~\ref{tab:features}. All features are normalised to the unit interval
+before the formulation module is invoked; any value outside $[0,1]$ is
+rejected at construction time (Section~\ref{sec:validation}).
+
+\begin{table}[t]
+  \centering
+  \caption{Per-edge features, all normalised to $[0,1]$.}
+  \label{tab:features}
+  \begin{tabular}{llp{7.2cm}}
+    \toprule
+    Feature & Symbol & Meaning \\
+    \midrule
+    Trust              & $f^{\mathrm{tr}}_e$    & EWMA trust of the endpoint pair, learned from past outcomes. \\
+    Link quality       & $f^{\mathrm{lq}}_e$    & Recent packet-delivery success on this link. \\
+    Battery            & $f^{\mathrm{ba}}_e$    & Minimum battery level of the two endpoints. \\
+    Proximity          & $f^{\mathrm{pr}}_e$    & Normalised closeness, decreasing in Euclidean distance. \\
+    Freshness          & $f^{\mathrm{fr}}_e$    & Recency of the last successful message on this link. \\
+    Task criticality   & $f^{\mathrm{tc}}_e$    & Whether the link serves a mission-critical flow. \\
+    Processing cost    & $f^{\mathrm{pc}}_e$    & Compute required to maintain and monitor the link. \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+The first six features describe desirable properties; the seventh is a cost.
+We aggregate the desirable features into a scalar edge utility
+\begin{equation}
+  U_e \;=\; w_{\mathrm{tr}} f^{\mathrm{tr}}_e
+        + w_{\mathrm{lq}} f^{\mathrm{lq}}_e
+        + w_{\mathrm{ba}} f^{\mathrm{ba}}_e
+        + w_{\mathrm{pr}} f^{\mathrm{pr}}_e
+        + w_{\mathrm{fr}} f^{\mathrm{fr}}_e
+        + w_{\mathrm{tc}} f^{\mathrm{tc}}_e,
+  \label{eq:utility}
+\end{equation}
+with weights
+\begin{equation}
+  (w_{\mathrm{tr}}, w_{\mathrm{lq}}, w_{\mathrm{ba}}, w_{\mathrm{pr}},
+   w_{\mathrm{fr}}, w_{\mathrm{tc}}) = (0.25, 0.25, 0.10, 0.10, 0.15, 0.15).
+  \label{eq:weights}
+\end{equation}
+The weights are validated to sum to one, so $U_e \in [0,1]$ and can be read
+as the fraction of an ideal link that edge $e$ realises. Trust and link
+quality dominate because they carry the causal signal for delivery success;
+battery and proximity act as mild tie breakers; freshness and task
+criticality sit between. Because every feature lies in $[0,1]$, no single
+edge is ever worth more than about one unit of soft energy. This fact is the
+basis of the penalty argument below.
+
+\subsection{Decision variables}
+
+Not every edge is subject to optimisation. A subset
+$E_{\mathrm{hard}} \subseteq E_{\mathrm{cand}}$ of edges may be marked
+\emph{hard-critical} by the mission layer, for example because a link is the
+sole path to a stranded rover. Hard-critical edges are always kept and are
+excluded from the variable set entirely; their utility and their contribution
+to degree and budget accounting enter the energy only as constants. For each
+remaining optional edge $e \in E_{\mathrm{opt}} = E_{\mathrm{cand}} \setminus
+E_{\mathrm{hard}}$ we introduce one binary variable
+\begin{equation}
+  x_e =
+  \begin{cases}
+    1, & \text{if edge } e \text{ is kept},\\
+    0, & \text{if edge } e \text{ is pruned}.
+  \end{cases}
+  \label{eq:xvar}
+\end{equation}
+The full variable vector $\mathbf{x} \in \{0,1\}^{|E_{\mathrm{opt}}|}$ is the
+primary output of the solver; slack and flow variables introduced below are
+auxiliary and are projected away when the solution is extracted.
+
+\subsection{Soft objective}
+\label{sec:soft}
+
+The soft part of the energy encodes two desiderata. First, we want to keep
+edges of high utility while preferring a sparse graph overall. Second,
+because the formulation runs every cycle in a live network, we want to
+discourage gratuitous churn: pruning and re-adding the same edge in
+alternating cycles costs signalling overhead and destabilises the trust
+estimates that depend on link history.
+
+Let $x^{\mathrm{prev}}_e \in \{0,1\}$ denote the decision taken for edge $e$
+in the previous cycle (zero for edges seen for the first time). The soft
+energy is
+\begin{equation}
+  E_{\mathrm{soft}}(\mathbf{x}) \;=\;
+  \sum_{e \in E_{\mathrm{opt}}} \bigl(-U_e + \lambda\bigr) x_e
+  \;+\; \mu \sum_{e \in E_{\mathrm{opt}}} \bigl| x_e - x^{\mathrm{prev}}_e \bigr|,
+  \label{eq:soft}
+\end{equation}
+with edge penalty $\lambda = 0.08$ and stability penalty $\mu = 0.15$. The
+linear term keeps exactly those edges with $U_e > \lambda$: keeping an edge
+whose utility clears the small threshold lowers the energy, and keeping a
+worthless edge raises it. The second sum counts the number of flips relative
+to the previous decision. Since $x_e$ and $x^{\mathrm{prev}}_e$ are binary,
+$|x_e - x^{\mathrm{prev}}_e|$ is linear in $x_e$ once the constant
+$x^{\mathrm{prev}}_e$ is fixed, so \eqref{eq:soft} is a purely linear
+function of $\mathbf{x}$. The quadratic structure of the problem enters only
+through the constraints, to which we now turn.
+
+\subsection{Hard constraints as dominant penalties}
+\label{sec:penalties}
+
+A QUBO has no explicit constraints, so each hard requirement is encoded as a
+non-negative penalty term that vanishes exactly on feasible solutions. For
+the encoding to be correct, breaking a constraint must always cost more than
+any possible soft gain. Inspection of \eqref{eq:soft} shows that the soft
+energy contributed by a single edge is bounded in magnitude by
+$1 + \lambda + \mu < 1.3$. We therefore choose penalty magnitudes of $100$
+and $500$: any single violation costs at least $100$ while the entire soft
+objective over a realistic instance is worth at most a few units, so no
+feasible-gain trade can ever justify an infeasible configuration.
+Table~\ref{tab:penalties} summarises the coefficients.
+
+\begin{table}[t]
+  \centering
+  \caption{Soft coefficients and hard-penalty magnitudes. Hard penalties
+  dominate the soft objective by roughly two orders of magnitude.}
+  \label{tab:penalties}
+  \begin{tabular}{llr}
+    \toprule
+    Term & Role & Value \\
+    \midrule
+    Edge penalty $\lambda$        & soft, prefers fewer links            & 0.08 \\
+    Stability penalty $\mu$       & soft, discourages churn              & 0.15 \\
+    Degree penalty                & hard, per-node degree caps           & 100 \\
+    Budget penalty                & hard, global processing budget       & 100 \\
+    Flow penalty                  & hard, connectivity to the root       & 500 \\
+    Flow capacity penalty         & hard, flow only on kept edges        & 500 \\
+    Cost scale $s$                & budget quantisation factor           & 10 \\
+    \bottomrule
+  \end{tabular}
+\end{table}
+
+\paragraph{Degree caps.}
+Each rover $i$ has a degree limit $d_i^{\max}$ reflecting its radio and
+compute capacity. Let $\delta(i)$ be the set of optional edges incident to
+$i$ and let $k_i$ be the number of hard-critical edges at $i$. The constraint
+$k_i + \sum_{e \in \delta(i)} x_e \le d_i^{\max}$ is encoded with a
+non-negative integer slack $s_i \ge 0$ satisfying
+\begin{equation}
+  \sum_{e \in \delta(i)} x_e + s_i \;=\; d_i^{\max} - k_i,
+  \qquad
+  P_{\deg} \;=\; 100 \sum_{i \in V}
+  \Bigl( \sum_{e \in \delta(i)} x_e + s_i - (d_i^{\max} - k_i) \Bigr)^{\!2}.
+  \label{eq:degree}
+\end{equation}
+The integer slack is represented in binary as
+$s_i = \sum_{b=0}^{B_i - 1} 2^b y_{i,b}$ with $B_i =
+\lceil \log_2 (d_i^{\max} - k_i + 1) \rceil$ slack bits
+$y_{i,b} \in \{0,1\}$. Squaring the residual produces pairwise products
+$x_e x_{e'}$, $x_e y_{i,b}$, and $y_{i,b} y_{i,b'}$, which is exactly the
+quadratic form a QUBO accepts. The penalty vanishes only when the degree
+constraint holds with the correct slack.
+
+\paragraph{Global processing budget.}
+Maintaining a link consumes processing resources, and the fleet shares a
+global budget $B^{\max}$ expressed in integer cost units. Because QUBO
+penalties require exact arithmetic, real-valued processing costs are
+quantised: the cost of edge $e$ is $c_e = \lceil s \cdot
+f^{\mathrm{pc}}_e \rceil$ with cost scale $s = 10$, so costs are integers
+between $0$ and $10$. With $c_{\mathrm{hard}}$ the total cost of
+hard-critical edges and an integer slack $t = \sum_b 2^b z_b \ge 0$ built
+from binary slack bits $z_b$, the budget constraint becomes
+\begin{equation}
+  P_{\mathrm{bud}} \;=\; 100 \,
+  \Bigl( \sum_{e \in E_{\mathrm{opt}}} c_e x_e + t
+         - (B^{\max} - c_{\mathrm{hard}}) \Bigr)^{\!2}.
+  \label{eq:budget}
+\end{equation}
+Quantisation conservatively overestimates each cost, so a solution feasible
+under the QUBO is always feasible under the true real-valued budget.
+
+\paragraph{Connectivity by single-commodity flow.}
+Sparsity and degree caps must not disconnect the network. We designate a root
+rover $r \in V$ and a set $V_{\mathrm{req}} \subseteq V$ of required nodes
+(every rover that must remain reachable this cycle) and demand that every
+required node be connected to $r$ through kept edges. Rather than one flow
+per destination, we use a single-commodity flow: the root injects
+$|V_{\mathrm{req}}|$ units of flow into the network, each required node
+absorbs one unit, and flow may travel only along kept edges. For every
+undirected candidate edge $e = (i,j)$ we introduce two directed flow
+variables $f_{ij}, f_{ji} \in \{0,1\}$ indicating whether an arc carries
+flow. Flow conservation at every node $i \ne r$ reads
+\begin{equation}
+  \sum_{j} f_{ji} - \sum_{j} f_{ij} \;=\;
+  \begin{cases}
+    1, & i \in V_{\mathrm{req}} \setminus \{r\},\\
+    0, & \text{otherwise},
+  \end{cases}
+  \label{eq:flowcons}
+\end{equation}
+and at the root the net outflow must equal $|V_{\mathrm{req}}|$. Because the
+right-hand sides are integers, the standard integrality property of
+single-commodity flow guarantees that binary flow variables suffice: if any
+feasible flow exists, an integral one exists. This is why a single commodity
+is enough here. We do not ask \emph{how much} traffic each required node
+receives, only whether it is reachable, and unit demands with one source make
+the reachability question a single-commodity problem rather than a
+multi-commodity one, keeping the variable count linear in the number of arcs.
+
+Each constraint of \eqref{eq:flowcons} is penalised quadratically with
+weight $500$:
+\begin{equation}
+  P_{\mathrm{flow}} \;=\; 500 \sum_{i \in V}
+  \Bigl( \text{inflow}_i - \text{outflow}_i - d_i \Bigr)^{\!2},
+  \label{eq:flowpen}
+\end{equation}
+where $d_i$ is the demand defined by \eqref{eq:flowcons}. Flow must also be
+forbidden on pruned edges. Since demands are unit and the total flow is
+$|V_{\mathrm{req}}|$, at most $|V_{\mathrm{req}}|$ arcs can carry flow, so a
+capacity slack encoding links flow to edge variables: an arc may carry flow
+only if its edge is kept, enforced by a second family of quadratic penalties
+with weight $500$ and per-edge integer capacity slack bits. A required node
+that cannot be reached leaves its conservation residual at $1$, firing a
+penalty of $500$ and rendering the configuration strictly worse than any
+feasible one.
+
+The complete energy is
+\begin{equation}
+  E(\mathbf{x}, \mathbf{y}, \mathbf{z}, \mathbf{f}) \;=\;
+  E_{\mathrm{soft}}(\mathbf{x})
+  + P_{\deg} + P_{\mathrm{bud}} + P_{\mathrm{flow}} + P_{\mathrm{cap}},
+  \label{eq:energy}
+\end{equation}
+which the formulation module expands into an explicit upper-triangular
+matrix $Q$ such that $E = \mathbf{v}^{\top} Q \mathbf{v} + \text{const}$ over
+the concatenated variable vector $\mathbf{v}$. In summary, the variable
+structure comprises: one binary per optional edge; $\Theta(\log d_i^{\max})$
+slack bits per node for degree caps and $\Theta(\log B^{\max})$ bits for the
+budget; two flow binaries per undirected edge, one per directed arc; and
+capacity slack bits per edge.
+
+\subsection{Input validation at construction}
+\label{sec:validation}
+
+The formulation module validates its inputs hard and refuses to build an
+ill-posed instance rather than silently producing a meaningless QUBO. Three
+families of errors raise immediately. First, feature vectors with any
+component outside $[0,1]$ are rejected, as are weight vectors that do not sum
+to one; the normalisation invariants of Table~\ref{tab:features} are
+preconditions, not suggestions. Second, any required node that is unreachable
+from the root in the full candidate graph $E_{\mathrm{cand}}$ is rejected:
+no feasible pruning exists, so the instance is unsatisfiable by construction
+and the caller must either relax the requirement or extend the communication
+range. Third, a global budget below the cost of the cheapest spanning tree
+connecting the required nodes is rejected for the same reason. Failing fast
+at the formulation boundary is what allows the downstream solver audit of
+the next section to attribute every infeasible sample to the solver rather
+than to the encoding.
+
+\subsection{A worked toy example}
+\label{sec:toy}
+
+We illustrate the construction on a four-rover instance, drawn in
+Figure~\ref{fig:toy}. Rovers $A$ (the root), $B$, $C$, and $D$ admit five
+candidate edges; the edge $(A,B)$ is marked hard-critical. Consider edge
+$(B,C)$ with feature vector
+\begin{equation*}
+  \mathbf{f}_{BC} = (f^{\mathrm{tr}}, f^{\mathrm{lq}}, f^{\mathrm{ba}},
+                     f^{\mathrm{pr}}, f^{\mathrm{fr}}, f^{\mathrm{tc}})
+                  = (0.9,\, 0.8,\, 0.6,\, 0.7,\, 0.5,\, 0.0).
+\end{equation*}
+Its utility by \eqref{eq:utility} is
+\begin{equation*}
+  U_{BC} = 0.25(0.9) + 0.25(0.8) + 0.10(0.6) + 0.10(0.7)
+         + 0.15(0.5) + 0.15(0.0) = 0.63,
+\end{equation*}
+so the linear coefficient in \eqref{eq:soft} is $-0.63 + 0.08 = -0.55$:
+keeping $(B,C)$ lowers the energy and is soft-preferred. The edge $(C,D)$, by
+contrast, carries stale trust and poor link quality, giving $U_{CD} = 0.06$
+and a coefficient of $+0.02$: it is kept only if constraints demand it.
+
+Suppose the degree cap of rover $C$ is $d_C^{\max} = 2$ and the budget is
+tight. The optimum then keeps the chain $(A,B)$, $(B,C)$, $(C,D)$ if the
+budget permits, because connectivity of the required node $D$ is worth $500$
+penalty units while the edge $(C,D)$ costs only $0.02$ in soft energy and a
+few quantised budget units. If the budget cannot cover the chain, the solver
+routes flow through $(A,D)$ instead and prunes $(C,D)$. The qualitative
+pattern is representative of larger instances: the soft objective shapes the
+graph around high-trust, high-quality links, while the penalty terms silently
+guarantee that every required rover stays attached to the root. The example
+is illustrative; Section~\ref{sec:verification} describes how we verify that
+the energy function evaluates such trades correctly.
+
+\begin{figure}[t]
+  \centering
+  \begin{tikzpicture}[
+      rover/.style={circle, draw, thick, minimum size=8mm, inner sep=0pt},
+      root/.style={rover, fill=black!15},
+      kept/.style={line width=1.4pt},
+      hard/.style={kept, double},
+      pruned/.style={dashed, gray},
+      every node/.style={font=\small}]
+    \node[root]  (A) at (0,0)    {$A$};
+    \node[rover] (B) at (2.4,1.1)  {$B$};
+    \node[rover] (C) at (2.4,-1.1) {$C$};
+    \node[rover] (D) at (4.8,0)    {$D$};
+    \draw[hard]   (A) -- (B) node[midway, above left, font=\scriptsize] {hard-critical};
+    \draw[kept]   (B) -- (C) node[midway, right, font=\scriptsize] {$U=0.63$};
+    \draw[kept]   (A) -- (D);
+    \draw[pruned] (C) -- (D) node[midway, below right, font=\scriptsize] {$U=0.06$};
+    \draw[pruned] (B) -- (D);
+  \end{tikzpicture}
+  \caption{Toy instance with four rovers and five candidate edges. Solid
+  lines are kept edges, the double line is hard-critical, and dashed grey
+  lines are pruned. Rover $A$ is the flow root.}
+  \label{fig:toy}
+\end{figure}
+
+\subsection{Verification of the energy function}
+\label{sec:verification}
+
+Every downstream conclusion in this report depends on the Q matrix encoding
+the intended energy. We therefore verify the construction at three
+independent levels. First, the energy function shipped in the formulation
+module is cross-checked against an independent re-derivation written from
+equations \eqref{eq:soft} to \eqref{eq:energy} directly over selected edge
+sets, bypassing the matrix entirely; the two agree on randomly sampled
+configurations to within $10^{-7}$, the scale of floating-point
+accumulation. Second, on small instances we enumerate all
+$2^{|E_{\mathrm{opt}}|}$ edge subsets exhaustively, evaluate each with the
+independent energy, and confirm that the argmin over the matrix
+representation matches the enumeration exactly. Third, we solve the QUBO
+exactly by a standard linearisation, introducing one auxiliary variable per
+nonzero quadratic term, with an exact integer programming solver; the
+certified optimum again agrees with enumeration. The three routes, analytic
+re-derivation, brute force, and exact linearised solve, share no code, so
+agreement to $10^{-7}$ rules out a systematic encoding error. The solver
+benchmark of later chapters, which compares annealing heuristics against
+this ground truth, would be meaningless without it.
+
+\subsection{Summary}
+
+We have reduced dynamic edge pruning to a QUBO whose soft terms express
+utility, sparsity, and temporal stability, and whose hard terms, degree caps,
+a quantised global budget, and single-commodity flow connectivity, are
+encoded with penalties two orders of magnitude larger than any possible soft
+gain. The construction validates its inputs at the boundary, produces an
+explicit quadratic matrix suitable for both classical and annealing solvers,
+and is verified against independent ground truth. The next chapter describes
+the solver that operates on this encoding and the audit that establishes how
+close it comes to the exact optimum.

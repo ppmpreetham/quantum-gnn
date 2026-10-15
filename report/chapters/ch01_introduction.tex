@@ -1,0 +1,284 @@
+\section{Introduction}
+\label{ch:introduction}
+
+\subsection{Motivation}
+\label{sec:intro-motivation}
+
+Teams of small, inexpensive rovers are an increasingly realistic answer to a
+class of problems where a single large machine is the wrong tool. In planetary
+exploration, a cluster of metre-scale scouts can survey a lava tube or a
+crater rim in parallel, covering in hours what one flagship rover covers in
+weeks, and the loss of one unit degrades the mission instead of ending it.
+Closer to home, disaster response presents the same structure: after an
+earthquake or a chemical release, a team of disposable ground robots can map
+voids, sample air, and relay survivor signals through rubble that no human
+and no single large vehicle can enter. Both settings share three properties
+that drive everything in this report. The environment is unknown and
+changing, the robots are cheap and therefore individually unreliable, and
+there is no infrastructure: the team must carry its own network with it.
+
+That network is the central object of our study. We consider rovers that
+communicate over short-range, low-power radios of the ESP-NOW class: link
+budgets of a few hundred milliwatts, useful ranges of tens of metres, and
+packet delivery probabilities that fluctuate with distance, occlusion, and
+interference. As the rovers move, the set of pairs that can hear each other
+changes continuously, so the communication topology is not a fixed design
+choice but a \emph{dynamic graph} that the mission software inherits anew
+every control cycle. Two consequences follow. First, the full graph is rarely
+the graph you want to compute on: it contains weak, stale, and expensive
+links that add noise to every downstream decision while consuming radio and
+processor budget. Second, the rovers themselves differ in dependability, and
+that dependability drifts. A unit with a degrading motor controller or a
+corrupt sensor may still look perfectly reachable on the radio graph while
+quietly failing every task it is given.
+
+These observations motivate the two mechanisms at the heart of the project.
+\emph{Link pruning} treats the working communication graph as a decision
+variable: rather than accepting whatever topology the radios happen to
+provide, the system selects, once per cycle, a smaller subgraph that is
+provably connected where it matters, respects per-rover degree and
+processing budgets, and favours links that are trusted, fresh, and cheap.
+\emph{Trust} treats reliability as a learned quantity: each rover carries a
+trust score, updated online from observed task outcomes, which biases both
+which links survive pruning and which rover is offered which task. A rover
+that keeps failing is not argued with; it is simply routed around, until its
+later successes earn its way back. The two mechanisms are coupled, and the
+coupling is the point: pruning decides who talks to whom, trust decides who
+is believed, and both feed a task allocator whose successes and failures
+become the evidence for the next round of trust updates.
+
+\subsection{Problem statement}
+\label{sec:intro-problem}
+
+Each control cycle, the system faces two coupled discrete decisions. The
+first is \emph{which links to keep}. Given the current dynamic graph, a
+vector of per-link features (trust of the endpoints, measured link quality,
+battery levels, proximity, freshness of the last successful exchange,
+criticality of pending traffic, and the processing cost of maintaining the
+link), and a set of hard requirements (mission-critical nodes must remain
+reachable from a designated root, no rover may exceed its degree limit, and
+the total processing cost may not exceed a global budget), choose a subset
+of edges that maximises a weighted utility while satisfying every hard
+requirement. The second decision is \emph{which rover does which task}.
+Given the pruned graph, score every rover for every pending task and
+produce an assignment that respects per-rover capacity. The decisions are
+coupled because the scoring runs \emph{on the pruned graph}: a rover cut off
+by pruning cannot be reached by the assignment, and an assignment that
+concentrates load changes the trust and battery features that the next
+pruning round will see. A deliberate design rule follows from this coupling:
+connectivity is never sacrificed for utility, since a beautifully scored
+task allocation is worthless if the winning rover cannot be sent its orders.
+
+The problem is a constrained combinatorial optimisation with quadratic
+structure (the utility of keeping two links is not always the sum of their
+individual utilities, because redundant paths and shared endpoints
+interact), and it must be solved repeatedly, online, under a time budget,
+on hardware far weaker than a workstation.
+
+\subsection{Why a QUBO, and why we say so honestly}
+\label{sec:intro-why-qubo}
+
+We encode the link-selection decision as a \emph{quadratic unconstrained
+binary optimisation} problem, or QUBO: an energy function over binary
+variables in which every hard constraint becomes a penalty term large enough
+that violating it is never worth the utility it could buy. The attraction of
+this encoding is portability. A QUBO is the native input format of quantum
+annealers and of a growing family of dedicated classical samplers, so a
+single formulation can be submitted unchanged to a D-Wave-class device, to
+the D-Wave \code{neal} simulated annealer, to a tabu search, or to an
+Ising-machine simulator such as OpenJij. If annealing hardware matures, the
+encoding is already waiting for it.
+
+Honesty, however, is a design requirement of this project, not a garnish. On
+classical hardware, an exact mixed-integer linear program solved with CBC
+finds provably optimal solutions to the same constrained problem roughly two
+orders of magnitude faster than our annealer, and the off-the-shelf QUBO
+samplers we benchmarked find the exact optimum on our actual penalty matrix
+in only about half to two thirds of instances. We report these numbers in
+full, in the body of the report, with the same prominence as our positive
+results. The QUBO formulation is justified by its hardware trajectory and
+its clean separation of modelling from solving, not by a false claim of
+classical superiority. Where a classical exact method wins, we say it wins.
+
+\subsection{The mist, fog, and cloud deployment vision}
+\label{sec:intro-tiers}
+
+The architecture is organised around three computational tiers. The
+\emph{mist} tier is the rovers themselves: microcontrollers with just enough
+compute to run radio exchange, local sensing, and task execution. The
+\emph{fog} tier is a single Raspberry Pi-class board riding with the team.
+It runs the two latency-critical inference stages each cycle: the production
+annealer that solves the pruning QUBO, and a deliberately tiny trust-aware
+message-passing graph neural network (GNN), implemented in pure NumPy, that
+scores rovers on the pruned graph. Nothing on the fog tier requires a
+library heavier than NumPy, because nothing on that tier may assume a
+network connection. The \emph{cloud} tier, reachable opportunistically,
+does the heavy and patient work: training the GNN readout weights on
+collected mission logs, and amortising expensive solves so that a fresh
+QUBO need not be built from scratch every cycle. This division is not
+decorative. It dictates engineering constraints that the reader will see
+resurface throughout the report: the GNN must run without a deep-learning
+framework, the annealer must be restartable and seedable for
+reproducibility, and every cloud dependency must have a graceful fog-tier
+fallback.
+
+\subsection{An audit-first philosophy}
+\label{sec:intro-audit}
+
+This project is built as an audit of itself. Every quantitative claim in
+this report is backed by an executable check, and the check survives in the
+project's hostile test harness long after the claim is written. The QUBO
+encoding is verified against exhaustive enumeration of all feasible edge
+subsets on small instances and against an exact MILP on larger ones, so the
+penalty matrix is never taken on faith. Four off-the-shelf QUBO samplers are
+benchmarked directly on the penalty matrix our formulation actually
+produces, rather than on a convenient synthetic instance. Statistical claims
+about mission success come with paired bootstrap confidence intervals and
+permutation p-values, and comparisons that fail to reach significance are
+labelled as such in the tables where they appear. Most importantly, negative
+results are reported with equal prominence. Our learned GNN readout does not
+beat its hand-tuned weights; the QUBO pruner loses on raw mission success to
+a trivially simple threshold pruner at one fleet scale; classical MILP
+dominates the annealer. Each of these findings is presented, explained, and
+kept, because a report about trustworthy robots that hides its own failures
+would be making the opposite of its point.
+
+\subsection{Contributions}
+\label{sec:intro-contributions}
+
+The project makes the following contributions.
+
+\begin{itemize}
+  \item A constrained QUBO formulation of communication-graph pruning for
+    dynamic rover networks, unifying multi-feature link utility with hard
+    connectivity, degree, and processing-budget constraints in a single
+    annealer-compatible energy function.
+  \item A feasibility-projected simulated annealer that moves only in the
+    space of valid edge sets, repairing every candidate against the hard
+    constraints, and that matches exact enumeration on small instances and
+    achieves 95\% exactness against MILP ground truth on larger ones.
+  \item A solver-level audit benchmarking four off-the-shelf QUBO samplers
+    (bit-level simulated annealing, D-Wave \code{neal}, tabu search, and an
+    OpenJij-based Ising sampler) on the actual penalty matrix, quantifying
+    how far generic samplers fall short of feasibility-aware search.
+  \item A trust-aware GNN scoring stage, small enough for pure NumPy
+    inference on Raspberry Pi-class fog hardware, integrated with online
+    per-rover trust updates driven by observed task outcomes.
+  \item A causal end-to-end simulation harness in which hidden ground-truth
+    reliability drives outcomes, so that mission success genuinely depends
+    on the pruned topology rather than merely correlating with it, with
+    paired bootstrap and permutation statistics throughout.
+  \item A physics integration using Gazebo Harmonic and ROS 2 Jazzy, plus a
+    browser-based fleet console built on a custom three.js engine with a
+    Python backend, allowing live inspection and in-place tuning of the
+    full pipeline.
+  \item A set of deliberately reported negative results, including the null
+    outcome of readout training and the raw-success deficit of QUBO pruning
+    against a simple threshold baseline, each analysed rather than
+    suppressed.
+\end{itemize}
+
+\subsection{The per-cycle pipeline}
+\label{sec:intro-pipeline}
+
+Figure~\ref{fig:pipeline} summarises the loop that every chapter of this
+report elaborates. Each control cycle begins from the current dynamic
+communication graph. The QUBO builder encodes the pruning decision as a
+penalty matrix, and the production annealer solves it in feasibility-projected
+edge space, yielding the working graph. The trust-aware GNN scores rovers on
+that working graph, a capacity-aware greedy stage assigns the pending tasks,
+and outcomes are observed. The trust model absorbs the outcomes as evidence,
+updates every rover's score, and the updated features feed the next cycle's
+graph construction, closing the loop.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+    font=\small,
+    stage/.style={draw, rounded corners=2pt, align=center, minimum width=3.1cm,
+                  minimum height=1.05cm, inner sep=4pt},
+    arr/.style={-{Stealth[length=2.6mm]}, thick},
+    lbl/.style={font=\footnotesize\itshape, midway}
+  ]
+  \node[stage] (build) {Graph build\\ dynamic radio topology};
+  \node[stage, right=1.6cm of build] (qubo) {QUBO prune\\ feasibility-projected\\ annealer};
+  \node[stage, right=1.6cm of qubo] (gnn) {GNN scoring\\ trust-aware message\\ passing};
+  \node[stage, below=1.5cm of gnn] (assign) {Task assignment\\ capacity-aware greedy};
+  \node[stage, left=1.6cm of assign] (outcome) {Outcome observation\\ success / failure};
+  \node[stage, left=1.6cm of outcome] (trust) {Trust update\\ online EWMA};
+
+  \draw[arr] (build) -- (qubo);
+  \draw[arr] (qubo) -- (gnn);
+  \draw[arr] (gnn) -- (assign);
+  \draw[arr] (assign) -- (outcome);
+  \draw[arr] (outcome) -- (trust);
+  \draw[arr] (trust) -- (build) node[lbl, above] {features feed next cycle};
+
+  \begin{scope}[on background layer]
+    \node[draw, dashed, inner sep=6pt, fit=(build)(qubo)(gnn),
+          label={[font=\footnotesize]above:fog tier (Raspberry Pi class)}] {};
+    \node[draw, dashed, inner sep=6pt, fit=(assign)(outcome)(trust),
+          label={[font=\footnotesize]below:mist tier (rovers) + trust model}] {};
+  \end{scope}
+\end{tikzpicture}
+\caption{The per-cycle pipeline. Each control cycle prunes the dynamic
+communication graph with a constrained QUBO, scores rovers with a
+trust-aware GNN on the pruned graph, assigns tasks under capacity limits,
+observes outcomes, and folds the evidence back into the trust model that
+shapes the next cycle's features.}
+\label{fig:pipeline}
+\end{figure}
+
+\subsection{Report roadmap}
+\label{sec:intro-roadmap}
+
+The report is organised into fourteen chapters, summarised in
+Table~\ref{tab:roadmap} and sketched here. Chapter~\ref{ch:introduction} is
+the present chapter. Chapter 2 reviews related work on multi-robot task
+allocation, trust models for robotic teams, and QUBO and annealing methods,
+positioning our combination of the three. Chapter 3 fixes notation and
+formalises the system model: the dynamic graph, the link and node features,
+and the two coupled per-cycle decisions. Chapter 4 derives the constrained
+QUBO formulation term by term, including the penalty-domination argument
+that makes hard constraints safe. Chapter 5 presents the production annealer,
+its feasibility projection, spanning-tree restarts, and polish phase, and
+analyses its evaluation budget. Chapter 6 reports the solver audit: exact
+enumeration and MILP ground truth, the four off-the-shelf samplers, and the
+sensitivity sweeps. Chapter 7 describes the trust model and the trust-aware
+GNN, including the null result on learned readout weights. Chapter 8
+specifies the causal simulation harness, the hidden reliability field, and
+the statistical machinery. Chapter 9 gives the mission-level results:
+ablations, pruner comparisons, staleness margins, and the negative results.
+Chapter 10 covers the mist, fog, and cloud deployment architecture and its
+engineering constraints. Chapter 11 presents the Gazebo Harmonic and ROS 2
+Jazzy physics integration. Chapter 12 describes the browser-based fleet
+console, its three.js rendering engine, and its live tuning interface.
+Chapter 13 collects the threats to validity and the limitations we consider
+binding. Chapter 14 concludes and maps the most promising directions for
+future work.
+
+\begin{table}[htbp]
+\centering
+\caption{Structure of the report.}
+\label{tab:roadmap}
+\begin{tabular}{clp{7.8cm}}
+\toprule
+\textbf{Chapter} & \textbf{Title} & \textbf{Topic} \\
+\midrule
+1 & Introduction & Motivation, problem statement, contributions, roadmap \\
+2 & Related work & Task allocation, trust models, QUBO and annealing \\
+3 & System model & Dynamic graph, features, coupled decisions, notation \\
+4 & QUBO formulation & Utility terms, hard constraints, penalty domination \\
+5 & Production annealer & Feasibility projection, restarts, polish, budget \\
+6 & Solver audit & Enumeration, MILP, off-the-shelf samplers, sensitivity \\
+7 & Trust and the GNN & Trust updates, message passing, readout null result \\
+8 & Simulation harness & Causal outcomes, hidden reliability, statistics \\
+9 & Mission results & Ablations, pruner comparison, negative results \\
+10 & Deployment tiers & Mist, fog, and cloud architecture and constraints \\
+11 & Physics integration & Gazebo Harmonic and ROS 2 Jazzy testbed \\
+12 & Fleet console & three.js engine, Python backend, live tuning \\
+13 & Threats to validity & Limitations, assumptions, scope of claims \\
+14 & Conclusion & Summary of findings and future work \\
+\bottomrule
+\end{tabular}
+\end{table}

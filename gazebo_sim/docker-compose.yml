@@ -1,0 +1,9 @@
+services:
+  quantum-gnn-gazebo:
+    build:
+      context: ..
+      dockerfile: gazebo_sim/Dockerfile
+    environment:
+      STEPS: "${STEPS:-12}"
+    stdin_open: true
+    tty: true

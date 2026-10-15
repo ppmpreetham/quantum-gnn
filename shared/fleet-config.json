@@ -1,0 +1,503 @@
+{
+  "arena": {
+    "radius": 6.0,
+    "bodyRadius": 0.62,
+    "wheelRadius": 0.16,
+    "track": 0.76,
+    "maxWheelSpeed": 1.25,
+    "maxAccel": 0.9,
+    "maxBrake": 1.8,
+    "maxYawRate": 1.8,
+    "maxYawAccel": 5.0
+  },
+  "params": [
+    {
+      "key": "roverCount",
+      "label": "Rovers",
+      "group": "fleet",
+      "scope": "session",
+      "min": 2,
+      "max": 16,
+      "step": 1,
+      "integer": true,
+      "help": "Fleet size. Changing it restarts the mission with fresh trust."
+    },
+    {
+      "key": "seed",
+      "label": "Scenario seed",
+      "group": "fleet",
+      "scope": "session",
+      "min": 0,
+      "max": 99999,
+      "step": 1,
+      "integer": true,
+      "help": "Fixes spawn points and the hidden reliability field."
+    },
+    {
+      "key": "speed",
+      "label": "Cruise speed",
+      "group": "fleet",
+      "scope": "client",
+      "min": 0,
+      "max": 1.0,
+      "step": 0.05,
+      "unit": "m/s",
+      "help": "Upper bound on forward speed; wheel limits still apply when turning."
+    },
+    {
+      "key": "timeScale",
+      "label": "Time scale",
+      "group": "fleet",
+      "scope": "client",
+      "min": 0.25,
+      "max": 3,
+      "step": 0.25,
+      "unit": "\u00d7",
+      "help": "Speeds up driving without changing the planner cadence."
+    },
+    {
+      "key": "communicationRange",
+      "label": "Radio range",
+      "group": "radio",
+      "scope": "planner",
+      "min": 1.5,
+      "max": 9,
+      "step": 0.1,
+      "unit": "m",
+      "help": "Rovers further apart than this cannot link."
+    },
+    {
+      "key": "packetLoss",
+      "label": "Packet loss",
+      "group": "radio",
+      "scope": "planner",
+      "min": 0,
+      "max": 0.6,
+      "step": 0.01,
+      "unit": "%",
+      "help": "Chance a link goes unobserved in a cycle, which makes its quality stale."
+    },
+    {
+      "key": "maxDegree",
+      "label": "Links per rover",
+      "group": "qubo",
+      "scope": "planner",
+      "min": 1,
+      "max": 6,
+      "step": 1,
+      "integer": true,
+      "help": "Hard degree cap in the QUBO. A spanning tree on 3+ rovers needs at least 2."
+    },
+    {
+      "key": "budget",
+      "label": "Link budget",
+      "group": "qubo",
+      "scope": "planner",
+      "min": 0,
+      "max": 160,
+      "step": 1,
+      "integer": true,
+      "unit": "units",
+      "help": "Hard cap on total quantized link cost. Below the cheapest spanning tree the planner relaxes it and says so."
+    },
+    {
+      "key": "restarts",
+      "label": "Annealer restarts",
+      "group": "qubo",
+      "scope": "planner",
+      "min": 2,
+      "max": 6,
+      "step": 1,
+      "integer": true,
+      "help": "Warm start plus random spanning-tree starts. Two is the floor: with one, an infeasible warm start leaves no feasible start at all."
+    },
+    {
+      "key": "coolingRate",
+      "label": "Cooling rate",
+      "group": "qubo",
+      "scope": "planner",
+      "min": 0.98,
+      "max": 0.999,
+      "step": 0.001,
+      "help": "Closer to 1 cools slower: better optima, longer solves."
+    },
+    {
+      "key": "tasksPerCycle",
+      "label": "Tasks per cycle",
+      "group": "tasks",
+      "scope": "planner",
+      "min": 1,
+      "max": 4,
+      "step": 1,
+      "integer": true,
+      "help": "Tasks dispatched each planning cycle; capped at the fleet size."
+    },
+    {
+      "key": "exploration",
+      "label": "Exploration",
+      "group": "tasks",
+      "scope": "planner",
+      "min": 0,
+      "max": 0.5,
+      "step": 0.01,
+      "unit": "%",
+      "help": "Chance a task goes to a random eligible rover to keep trust estimates honest."
+    },
+    {
+      "key": "trustMemory",
+      "label": "Trust memory",
+      "group": "tasks",
+      "scope": "planner",
+      "min": 0.1,
+      "max": 0.95,
+      "step": 0.05,
+      "help": "EWMA weight on past trust. Higher reacts slower to new outcomes."
+    },
+    {
+      "key": "reliabilityDrift",
+      "label": "Reliability drift",
+      "group": "tasks",
+      "scope": "planner",
+      "min": 0,
+      "max": 0.1,
+      "step": 0.005,
+      "help": "How fast each rover's hidden reliability wanders per cycle."
+    },
+    {
+      "key": "plannerInterval",
+      "label": "Planning cycle",
+      "group": "planner",
+      "scope": "client",
+      "min": 0.8,
+      "max": 6,
+      "step": 0.1,
+      "unit": "s",
+      "help": "Wall-clock time between planner requests."
+    }
+  ],
+  "groups": [
+    {
+      "id": "fleet",
+      "label": "Fleet"
+    },
+    {
+      "id": "radio",
+      "label": "Radio"
+    },
+    {
+      "id": "qubo",
+      "label": "QUBO pruning"
+    },
+    {
+      "id": "tasks",
+      "label": "Trust and tasks"
+    },
+    {
+      "id": "planner",
+      "label": "Planner"
+    }
+  ],
+  "defaults": {
+    "roverCount": 8,
+    "seed": 17,
+    "speed": 0.5,
+    "timeScale": 1,
+    "communicationRange": 4.6,
+    "packetLoss": 0.05,
+    "maxDegree": 3,
+    "budget": 60,
+    "restarts": 2,
+    "coolingRate": 0.99,
+    "tasksPerCycle": 2,
+    "exploration": 0.15,
+    "trustMemory": 0.5,
+    "reliabilityDrift": 0.02,
+    "plannerInterval": 1.6
+  },
+  "presets": [
+    {
+      "id": "field",
+      "name": "Field survey",
+      "description": "Eight rovers on a balanced radio budget. The everyday setting.",
+      "measuredCycleMs": 680,
+      "params": {
+        "roverCount": 8,
+        "seed": 17,
+        "speed": 0.5,
+        "timeScale": 1,
+        "communicationRange": 4.6,
+        "packetLoss": 0.05,
+        "maxDegree": 3,
+        "budget": 60,
+        "restarts": 2,
+        "coolingRate": 0.99,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.02,
+        "plannerInterval": 1.6
+      }
+    },
+    {
+      "id": "rapid",
+      "name": "Rapid response",
+      "description": "Six fast rovers and a one-second planning cycle for the lowest latency.",
+      "measuredCycleMs": 280,
+      "params": {
+        "roverCount": 6,
+        "seed": 17,
+        "speed": 0.8,
+        "timeScale": 1,
+        "communicationRange": 5.2,
+        "packetLoss": 0.05,
+        "maxDegree": 3,
+        "budget": 50,
+        "restarts": 2,
+        "coolingRate": 0.99,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.02,
+        "plannerInterval": 1.0
+      }
+    },
+    {
+      "id": "relay",
+      "name": "Relay corridor",
+      "description": "Ten rovers with long radios; the QUBO trims a dense mesh to a lean backbone.",
+      "measuredCycleMs": 750,
+      "params": {
+        "roverCount": 10,
+        "seed": 17,
+        "speed": 0.5,
+        "timeScale": 1,
+        "communicationRange": 5.0,
+        "packetLoss": 0.05,
+        "maxDegree": 3,
+        "budget": 80,
+        "restarts": 2,
+        "coolingRate": 0.99,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.02,
+        "plannerInterval": 1.8
+      }
+    },
+    {
+      "id": "swarm",
+      "name": "Dense swarm",
+      "description": "Twelve rovers on short radios, with faster cooling to keep cycles under a second.",
+      "measuredCycleMs": 780,
+      "params": {
+        "roverCount": 12,
+        "seed": 17,
+        "speed": 0.45,
+        "timeScale": 1,
+        "communicationRange": 4.2,
+        "packetLoss": 0.05,
+        "maxDegree": 3,
+        "budget": 90,
+        "restarts": 2,
+        "coolingRate": 0.985,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.02,
+        "plannerInterval": 2.0
+      }
+    },
+    {
+      "id": "fleet16",
+      "name": "Full fleet",
+      "description": "Sixteen rovers, the console's maximum. Planning takes about 1.5 s per cycle.",
+      "measuredCycleMs": 1420,
+      "params": {
+        "roverCount": 16,
+        "seed": 17,
+        "speed": 0.4,
+        "timeScale": 1,
+        "communicationRange": 3.6,
+        "packetLoss": 0.05,
+        "maxDegree": 3,
+        "budget": 140,
+        "restarts": 2,
+        "coolingRate": 0.98,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.02,
+        "plannerInterval": 2.6
+      }
+    },
+    {
+      "id": "hostile",
+      "name": "Hostile radio",
+      "description": "Heavy packet loss and drifting reliability. Watch trust track the hidden truth.",
+      "measuredCycleMs": 250,
+      "params": {
+        "roverCount": 8,
+        "seed": 17,
+        "speed": 0.5,
+        "timeScale": 1,
+        "communicationRange": 4.6,
+        "packetLoss": 0.35,
+        "maxDegree": 3,
+        "budget": 60,
+        "restarts": 2,
+        "coolingRate": 0.99,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.06,
+        "plannerInterval": 1.6
+      }
+    },
+    {
+      "id": "tight",
+      "name": "Tight constraints",
+      "description": "Two links per rover and a small budget. The planner relaxes constraints and reports each relaxation.",
+      "measuredCycleMs": 140,
+      "params": {
+        "roverCount": 10,
+        "seed": 17,
+        "speed": 0.5,
+        "timeScale": 1,
+        "communicationRange": 4.6,
+        "packetLoss": 0.05,
+        "maxDegree": 2,
+        "budget": 30,
+        "restarts": 2,
+        "coolingRate": 0.99,
+        "tasksPerCycle": 2,
+        "exploration": 0.15,
+        "trustMemory": 0.5,
+        "reliabilityDrift": 0.02,
+        "plannerInterval": 1.6
+      }
+    }
+  ],
+  "comparisons": [
+    {
+      "id": "none",
+      "kind": "none",
+      "label": "No comparison",
+      "short": "None"
+    },
+    {
+      "id": "assign:trust_only",
+      "kind": "assignment",
+      "baseline": "trust_only",
+      "label": "Trust-only assignment",
+      "summary": "Sends each task to the most trusted rover, ignoring the graph and resources.",
+      "reference": {
+        "metric": "Mission success",
+        "ours": 39.8,
+        "baseline": 31.7,
+        "delta": 8.1,
+        "ci": [
+          4.2,
+          11.7
+        ],
+        "p": 0.016,
+        "significant": true,
+        "source": "Paper Table 3: 10 rovers, 20 cycles, 8 seeds, paired bootstrap and permutation test."
+      },
+      "short": "Trust-only"
+    },
+    {
+      "id": "assign:random",
+      "kind": "assignment",
+      "baseline": "random",
+      "label": "Random assignment",
+      "summary": "Picks any eligible rover uniformly at random.",
+      "reference": {
+        "metric": "Mission success",
+        "ours": 39.8,
+        "baseline": 26.0,
+        "delta": 13.8,
+        "significant": true,
+        "source": "Paper Table 3: 10 rovers, 20 cycles, 8 seeds."
+      },
+      "short": "Random"
+    },
+    {
+      "id": "assign:nograph",
+      "kind": "assignment",
+      "baseline": "nograph",
+      "label": "No-graph readout",
+      "summary": "The same readout on raw rover features, with no message passing.",
+      "reference": {
+        "metric": "Mission success",
+        "ours": 39.8,
+        "baseline": 38.1,
+        "delta": 1.7,
+        "ci": [
+          -2.1,
+          6.9
+        ],
+        "p": 0.736,
+        "significant": false,
+        "source": "Paper Table 3. The margin is positive but not statistically significant."
+      },
+      "short": "No-graph"
+    },
+    {
+      "id": "solver:bitsa",
+      "kind": "solver",
+      "baseline": "bitsa",
+      "label": "Bit-flip simulated annealing",
+      "summary": "Single-bit SA on the same penalty-encoded Q matrix.",
+      "reference": {
+        "metric": "Exact optimum found",
+        "ours": 100,
+        "baseline": 56,
+        "source": "Battle test H: 25 instances with enumerated ground truth. Random restarts were infeasible in 19 of 25. Our annealer moves only between feasible link sets, a richer move set than single bit flips, so read this as an engineering result rather than a like-for-like sampler benchmark."
+      },
+      "short": "Bit-flip SA"
+    },
+    {
+      "id": "solver:neal",
+      "kind": "solver",
+      "baseline": "neal",
+      "label": "D-Wave neal sampler",
+      "summary": "dwave-neal simulated annealing on the same Q matrix.",
+      "reference": {
+        "metric": "Exact optimum found",
+        "ours": 100,
+        "baseline": 60,
+        "source": "Battle test H: 25 instances with enumerated ground truth. Our annealer moves only between feasible link sets, a richer move set than single bit flips, so read this as an engineering result rather than a like-for-like sampler benchmark."
+      },
+      "short": "neal"
+    },
+    {
+      "id": "solver:tabu",
+      "kind": "solver",
+      "baseline": "tabu",
+      "label": "Tabu search",
+      "summary": "dwave-tabu on the same Q matrix.",
+      "reference": {
+        "metric": "Exact optimum found",
+        "ours": 100,
+        "baseline": 64,
+        "source": "Battle test H: 25 instances with enumerated ground truth. Our annealer moves only between feasible link sets, a richer move set than single bit flips, so read this as an engineering result rather than a like-for-like sampler benchmark."
+      },
+      "short": "Tabu"
+    },
+    {
+      "id": "solver:sqa",
+      "kind": "solver",
+      "baseline": "sqa",
+      "label": "Simulated quantum annealing",
+      "summary": "OpenJij SQA on the same Q matrix.",
+      "reference": {
+        "metric": "Exact optimum found",
+        "ours": 100,
+        "baseline": 48,
+        "source": "Battle test H: 25 instances with enumerated ground truth. Our annealer moves only between feasible link sets, a richer move set than single bit flips, so read this as an engineering result rather than a like-for-like sampler benchmark."
+      },
+      "short": "SQA"
+    }
+  ],
+  "omitted": "Not listed because they beat this pipeline: exact MILP (CBC), which is exact and about 100\u00d7 faster on classical hardware, and the threshold pruner, which wins on raw success at 10 rovers (38.2% vs 33.8%). The QUBO's edge over them is its hard guarantees."
+}

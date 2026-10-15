@@ -29,7 +29,7 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
-from main import Edge, EdgeFeatures, EdgeSelectionQUBO, ProjectedEdgeAnnealing
+from main import Edge, EdgeFeatures, EdgeSelectionQUBO, ProjectedEdgeAnnealing, QUBOResult
 from trust_gnn import (
     Node,
     NodeFeatures,
@@ -226,6 +226,7 @@ class RoverSimulation:
         # if set, the global budget is budget_factor x the total cost of the
         # current cycle's candidate graph (relative pressure, comparable
         # across cycles); if None, the fixed qubo_budget above is used
+        annealer_options: Optional[dict] = None,   # ProjectedEdgeAnnealing overrides
     ) -> None:
         if pruner not in ("qubo", "full", "threshold", "topk",
                           "threshold_repair", "topk_repair"):
@@ -262,6 +263,11 @@ class RoverSimulation:
         self.qubo_budget = qubo_budget
         self.degree_cap = degree_cap
         self.budget_factor = budget_factor
+        self.annealer_options = dict(annealer_options or {})
+        # (mode, builder, result) of the latest prune, for inspection only
+        self.last_prune: Tuple[str, Optional[EdgeSelectionQUBO], Optional[QUBOResult]] = ("none", None, None)
+        self.last_outcomes: List[Tuple[str, Node, bool, bool, bool]] = []
+        self.last_path_factor: Dict[Node, float] = {}
 
         self.state: Dict[Node, RoverState] = {}
         # spatially correlated reliability field: nearby rovers share
@@ -430,6 +436,7 @@ class RoverSimulation:
     def _prune(self, edges: List[Edge], features: Dict[Edge, EdgeFeatures],
                cycle: int) -> Tuple[List[Edge], float, float]:
         """Return (kept_edges, build_seconds, solve_seconds)."""
+        self.last_prune = (self.pruner, None, None)
         if self.pruner == "full":
             t_ms = _timed_median_ms(lambda: list(edges))
             return list(edges), 0.0, t_ms / 1e3
@@ -465,6 +472,7 @@ class RoverSimulation:
         if cycle % self.solve_interval != 0 and self.last_kept:
             self.prune_mode_counts["stale-reuse"] = \
                 self.prune_mode_counts.get("stale-reuse", 0) + 1
+            self.last_prune = ("stale-reuse", None, None)
             return [e for e in self.last_kept if e in set(edges)], 0.0, 0.0
 
         # qubo
@@ -525,10 +533,11 @@ class RoverSimulation:
                 continue
             t1 = time.perf_counter()
             try:
-                result = ProjectedEdgeAnnealing(
-                    builder, initial_edge_sets=[warm], restarts=2, seed=cycle,
-                    steps_per_temperature=2, cooling_rate=0.995,
-                ).run()
+                result = ProjectedEdgeAnnealing(builder, **{
+                    "restarts": 2, "steps_per_temperature": 2,
+                    "cooling_rate": 0.995, **self.annealer_options,
+                    "initial_edge_sets": [warm], "seed": cycle,
+                }).run()
             except ValueError:
                 continue
             t2 = time.perf_counter()
@@ -536,8 +545,10 @@ class RoverSimulation:
         if result is None:  # degree caps alone are infeasible: keep everything
             self.prune_mode_counts["keep-all-fallback"] = \
                 self.prune_mode_counts.get("keep-all-fallback", 0) + 1
+            self.last_prune = ("keep-all-fallback", None, None)
             return list(edges), 0.0, 0.0
         self.solves_performed += 1
+        self.last_prune = (mode, builder, result)
         self.prune_mode_counts[mode] = self.prune_mode_counts.get(mode, 0) + 1
         self.last_kept = result.kept_edges
         return result.kept_edges, t1 - t0, t2 - t1
@@ -787,6 +798,7 @@ class RoverSimulation:
         # a node whose data cannot reach the root over the kept graph is not
         # a valid assignment target, regardless of trust
         path_factor = self._path_factors(kept, features)
+        self.last_path_factor = path_factor
         hidden = self.gnn.hidden_states(self.nodes, node_features, kept, features)
         scores = {
             tid: {n: self.gnn.score_from_hidden(n, hidden[n], node_features[n], t)
@@ -849,6 +861,7 @@ class RoverSimulation:
         # success additionally requires the result to cross the kept
         # topology to the root (delivery over the weakest path link)
         successes = 0
+        self.last_outcomes = []
         delivered_ok = 0
         delivered_failures = 0
         assigned_nodes = set(assignment.values())
@@ -861,6 +874,8 @@ class RoverSimulation:
             delivered = n == self.root or self.rng.random() < path_factor[n]
             ok = exec_ok and delivered
             successes += int(ok)
+            self.last_outcomes.append((tid, n, bool(exec_ok), bool(delivered),
+                                       tid in explored))
             delivered_ok += int(delivered)
             delivered_failures += int(not delivered)
             self.trust.update(n, 1.0 if exec_ok else 0.0)
