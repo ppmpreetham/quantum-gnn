@@ -1,0 +1,195 @@
+\chapter{Closed-Loop Simulation and Evaluation Methodology}
+\label{ch:sim}
+
+\section{Purpose and Design Principles}
+
+All quantitative end-to-end claims come from a closed-loop statistical
+simulator, a synthetic dynamic-graph world inspired by rover networking rather
+than a wireless channel model. Three principles governed it: \emph{causality}
+(delivery runs over the kept graph and execution depends on hidden reliability,
+so both pruning and assignment affect success); \emph{hidden truth} (the
+simulator knows each rover's reliability but the pipeline never sees it, so
+learned trust can be scored against the truth); and \emph{paired comparisons}
+(every arm runs on identical scenarios from the same seed).
+
+\section{The World Model}
+
+\subsubsection{Rovers and mobility} Rovers start at uniformly random
+positions in a $10\times10$ area and take a Gaussian random-walk step (standard
+deviation 0.8) every cycle, clipped to the area. Each rover has a battery
+that starts between 50 and 100\%, drains by 1 to 5\% per cycle and recharges
+by 3\% when lightly loaded; a load that rises by 0.15 with each assignment and
+halves every cycle; and a static capability between 0.4 and 1.0.
+
+\subsubsection{Hidden reliability} Each rover's reliability is drawn from a
+base level between 0.35 and 0.75 plus a spatially correlated field made of
+three Gaussian bumps of random sign and amplitude up to 0.3 (width 2.5),
+clipped to $[0.05,0.98]$. Nearby rovers therefore share good or bad
+conditions, which is what makes neighbourhood information useful to a GNN.
+Optionally, reliability drifts as a random walk with a chosen standard
+deviation per cycle, so trust must track a moving target.
+
+\subsubsection{Tasks and mission roster} A fixed number of tasks arrives
+each cycle (two by default), each with a criticality drawn between 0.2 and
+0.9. A fixed mission-critical roster, the root plus a few randomly chosen
+rovers, is drawn once per scenario. The roster is deliberately not redefined
+every cycle as ``whoever happens to be reachable'', which would make the
+connectivity guarantee trivially satisfied.
+
+\section{The Radio Model}
+
+Two rovers can link when they are within the communication range. In each
+cycle a link is observed with probability $1-\pi$, where $\pi$ is the packet
+loss (5\% by default). An observed link refreshes its quality,
+$L_e=\mathrm{clip}\bigl(1-d_{ij}/d_{\max}+\mathcal N(0,0.05^2)\bigr)$, and its
+timestamp; an unobserved link keeps its old quality and grows stale, with
+freshness $A_e=\exp(-\Delta t_e/3)$ in cycles. The edge cost follows
+Eq.~\eqref{eq:arch:cost}. Packet loss therefore does not delete links; it
+makes the pipeline's knowledge of them older and less reliable, which is the
+realistic failure mode.
+
+\section{Faults}
+
+Scripted faults stress the trust model and the pruner: a \emph{reliability
+drop} lowers one rover's (or every rover's) hidden reliability; an
+\emph{intermittent} fault toggles that drop every other cycle; a
+\emph{packet-loss spike} makes link knowledge stale fleet-wide; a
+\emph{battery drain} empties one rover until it cannot execute; and a
+\emph{position jump} displaces a rover abruptly. The default scenario degrades
+the most reliable rover for four cycles and adds a packet-loss spike one cycle
+later, the worst case for a system that has learned to rely on that rover.
+
+
+
+\section{Experimental Arms}
+
+\subsection{Pruner Arms}
+
+Six pruners share the same utility, Eq.~\eqref{eq:arch:utility}, so they
+differ only in how they choose:
+
+\begin{itemize}
+\item \textbf{full graph:} keep every candidate link;
+\item \textbf{threshold:} keep links with $U_e\ge0.4$;
+\item \textbf{top-$K$:} keep the best half of the links by utility;
+\item \textbf{threshold+repair} and \textbf{top-$K$+repair:} the same greedy
+choice followed by the same feasibility repair the QUBO path uses, enforcing
+degree caps, the budget and connectivity of the mission roster; if the budget
+is infeasible, the repair falls back to a minimum-cost spanning tree and
+reports the residual violation rather than returning an empty graph;
+\item \textbf{QUBO:} the projected annealer with the relaxation ladder of
+Section~\ref{sec:sol:ladder}.
+\end{itemize}
+
+The repaired arms are essential for fairness. A table that compares the
+constrained QUBO only against constraint-blind pruners would credit the QUBO
+with guarantees its opponents never tried to provide.
+
+\subsection{Budget and Degree Settings}
+
+The budget can be a fixed number of units $K$ or a fraction $\beta_K$ of the
+current cycle's full-graph cost, which keeps the pressure comparable across
+cycles whose graphs differ. The degree cap is three unless an experiment
+varies it. Section~\ref{sec:res:audit} explains why the second budget mode
+became necessary.
+
+\subsection{Cloud Amortisation}
+
+The QUBO can be solved every $k$ cycles instead of every cycle. Between
+solves the last decision is reused, intersected with the live graph so that
+no vanished link is ever kept. This models a cloud solver feeding a fog
+device on a slower cadence.
+
+\subsection{Assignment Arms}
+
+The four assignment arms of Chapter~\ref{ch:gnn}, GNN, no-graph, trust-only
+and random, share gates, delivery awareness and capacity, and differ only in
+the scorer.
+
+\section{Metrics}
+
+Table~\ref{tab:sim:metrics} defines every metric reported in
+Chapter~\ref{ch:results}. Four of them, offload, delivery failure and the
+precision and recall of delivery-critical pruning, are usually missing from
+pruning studies and were added specifically to test what the guarantees buy.
+
+\begin{table}[htbp]
+\centering
+\caption{Metrics computed by the simulator.}
+\label{tab:sim:metrics}
+\small
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Metric & Definition \\
+\midrule
+Mission success & fraction of tasks both executed and delivered \\
+Offload rate & fraction of task slots actually assigned on the kept graph \\
+Delivery-failure rate & failed deliveries divided by attempted deliveries \\
+Pruning precision / recall & agreement of kept edges with \emph{delivery-critical} edges (below) \\
+Trust Spearman & rank correlation between learned trust and hidden reliability \\
+Trust AUC & how well trust separates rovers above and below median reliability \\
+Violations & per-run counts of excess degree, budget overruns and disconnected mission rovers \\
+Stage latency & median of repeated timings of build, solve, GNN and assignment \\
+Recovery time & cycles until success returns to its pre-fault level \\
+Relaxation usage & cycles spent on each rung of the relaxation ladder \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\begin{definition}[Delivery-critical edge]
+In a given cycle, a candidate edge is \emph{delivery-critical} if removing it
+from the full candidate graph strictly reduces the widest-path delivery
+factor $p_i$ of at least one mission-critical rover.
+\end{definition}
+
+The labels are recomputed every cycle on the live candidate graph, so they are
+a counterfactual ground truth that does not depend on any pruner. Recall then
+asks how many of the links that matter for delivery a pruner kept, and
+precision how many of its kept links were ones that matter.
+
+\section{Statistical Methodology}
+
+Results are averaged over seeds, and differences between arms are always
+computed \emph{per seed}, because two arms run on the same scenario share
+most of their randomness. For per-seed differences $d_1,\dots,d_S$ the report
+gives three numbers.
+
+\begin{enumerate}[label=\arabic*.]
+\item The mean difference $\bar d$.
+\item A paired bootstrap 95\% confidence interval: resample the $S$ differences
+with replacement 10\,000 times and take the 2.5th and 97.5th percentiles of
+the resampled means~\cite{efron1993}.
+\item A sign-flip permutation $p$-value: under the null hypothesis of no
+difference, each $d_s$ is equally likely to have either sign, so the
+$p$-value is the fraction of 20\,000 random sign assignments whose mean is at
+least as extreme as $\bar d$.
+\end{enumerate}
+
+A difference is called significant when the interval excludes zero and
+$p<0.05$. With 8 to 16 seeds per arm the power is modest, and the report
+says so wherever a margin is not significant rather than drawing a trend
+through noise.
+
+\section{Scaling and Pressure Experiments}
+
+Two further experiment drivers run outside the closed loop.
+
+\subsubsection{Scaling} Range-limited sparse graphs, in which each rover
+links to its nearest neighbours as real short-range radios would, are built
+for fleets of 10 to 50 rovers. For each size the driver reports edge and
+variable counts, matrix memory, build and solve time, the energy of the
+projected annealer against a repaired greedy baseline, and GNN latency on the
+full and the pruned graph. Connectivity is enforced only up to 20 rovers,
+because the dense flow encoding grows quadratically, and the report never
+draws one curve across that transition.
+
+\subsubsection{Constraint pressure} The pressure sweep tightens one
+constraint at a time on identical scenarios: the budget fraction
+$\beta_K\in\{0.35,0.5,0.75,1.0\}$, the degree cap $D\in\{2,3,4\}$ and the
+roster size $|R|\in\{3,5,8\}$, each with six pruner arms, 16 seeds and 20
+cycles per run. Runs are logged incrementally so an interrupted sweep
+resumes where it stopped.
+
+All timings were measured on an AMD Ryzen 7 5800H (16 threads, 8~GB memory)
+with Python 3.14 and NumPy on its reference linear algebra library; the
+\emph{ratios} that drive the conclusions matter more than absolute times.

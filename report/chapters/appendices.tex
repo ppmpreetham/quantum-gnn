@@ -1,0 +1,155 @@
+% Appendices are numbered with Arabic numerals, as the template requires.
+\appendix
+\renewcommand{\thechapter}{\arabic{chapter}}
+\setcounter{chapter}{0}
+\renewcommand{\chaptername}{Appendix}
+\addtocontents{toc}{\protect\renewcommand{\protect\cftchappresnum}{Appendix }}
+
+\chapter{Pseudo-Code of the Pipeline, the Solver and the Motion Engine}
+\label{app:pseudo}
+
+This appendix gives, in algorithmic form, the per-cycle pipeline of
+Chapter~\ref{ch:arch} and the projected edge annealing of
+Chapter~\ref{ch:solvers}. The relaxation ladder and the motion engine's step
+are described in Sections~\ref{sec:sol:ladder} and~\ref{ch:engine}.
+
+\begin{algorithm}[H]
+\caption{One pipeline cycle}
+\label{alg:app:cycle}
+\begin{algorithmic}[1]
+\Require telemetry for cycle $t$, trust $T^{t-1}$, previous kept edges
+\State build $G_t$ and the edge and rover features, using $T^{t-1}$
+\State prune with projected annealing and the relaxation ladder (Section~\ref{sec:sol:ladder})
+\State run two layers of trust-weighted message passing on the kept graph
+\State score every rover for every task with gates, criticality and delivery factor
+\State assign tasks greedily under per-rover capacity; explore with probability $\varepsilon$
+\State observe execution and delivery outcomes
+\State update trust by EWMA for assigned rovers and by aging for the others
+\Ensure kept edges, assignment and $T^{t}$
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[H]
+\caption{Projected edge annealing}
+\label{alg:app:pea}
+\begin{algorithmic}[1]
+\Require QUBO builder, warm edge set $W$, schedule $(\tau_0,\tau_f,\gamma)$, steps $k$, restarts $n_r$
+\State best $\gets$ none
+\For{restart $=1,\dots,n_r$}
+  \State $S\gets W$ on the first restart, otherwise a degree-cap-aware random spanning tree
+  \If{$S$ cannot be projected to feasibility} \State \textbf{continue} \EndIf
+  \State $\tau\gets\tau_0$
+  \While{$\tau>\tau_f$}
+    \For{$k$ times}
+      \State propose $S'$: toggle one optional edge, or swap one kept and one unkept edge
+      \If{$S'$ projects to feasibility (closed-form slacks, spanning-tree flow)}
+        \State accept with probability $\min\{1,\exp(-(H(S')-H(S))/\tau)\}$
+      \EndIf
+    \EndFor
+    \State $\tau\gets\gamma\,\tau$
+  \EndWhile
+  \State polish: alternate single-toggle and pairwise-swap passes to a fixed point
+  \State keep $S$ if it is the best so far
+\EndFor
+\If{best is none} \State \textbf{fail}: no feasible edge set \EndIf
+\Ensure best edge set and its feasible bit vector
+\end{algorithmic}
+\end{algorithm}
+
+\chapter{Constants and Settings}
+\label{app:constants}
+
+\begin{longtable}{@{}p{7.2cm}p{7.0cm}@{}}
+\caption{Constants and default settings used in this report.}\label{tab:app:constants}\\
+\toprule
+Quantity & Value \\
+\midrule
+\endfirsthead
+\toprule
+Quantity & Value \\
+\midrule
+\endhead
+\multicolumn{2}{@{}l}{\emph{QUBO}} \\
+Utility weights (trust, link, battery, proximity, freshness, task) & 0.25, 0.25, 0.10, 0.10, 0.15, 0.15 \\
+Sparsity penalty $\lambda$ / stability penalty $\eta$ & 0.08 / 0.15 \\
+Degree and budget penalties $\rho_d,\rho_C$ & 100 \\
+Flow penalties $\rho_F,\rho_{FC}$ & 500 \\
+Cost quantisation & $c_e=\max(1,\lfloor10\,\bar c_e\rceil)$ \\
+\multicolumn{2}{@{}l}{\emph{Solvers}} \\
+Bit-level SA default schedule & $\tau$ from 10 to $10^{-3}$, cooling 0.98, 2 sweeps, 20 restarts \\
+Projected annealer default & $\tau$ from 1.0 to 0.01, cooling 0.998, 4 steps, 5 restarts, swap probability 0.5 \\
+Projected annealer in the closed loop & cooling 0.995, 2 steps, 2 restarts \\
+\multicolumn{2}{@{}l}{\emph{GNN and trust}} \\
+Self / neighbour weight & 0.8 / 0.2 \\
+Readout weights & 0.60, 0.15, 0.10, 0.15 \\
+Gates (trust, battery, compute) & 0.25, 0.15, 0.30 \\
+Critical-task scaling & $(0.5+0.5\,T_i)$ when criticality $>0.5$ \\
+Delivery modulation & $(0.5+0.5\,p_i)$ \\
+EWMA retention $\alpha$ / aging $\delta$ / prior & 0.5 / 0.1 / 0.5 \\
+Exploration $\varepsilon$ & 0.15 \\
+Probation freshness floor & 0.4 \\
+\multicolumn{2}{@{}l}{\emph{Simulator}} \\
+Area, random-walk step & $10\times10$, standard deviation 0.8 \\
+Packet loss, freshness constant & 5\%, 3 cycles \\
+Threshold / top-$K$ fraction & 0.4 / 0.5 \\
+Bootstrap resamples / permutations & 10\,000 / 20\,000 \\
+\multicolumn{2}{@{}l}{\emph{Gazebo world}} \\
+Physics step, real-time factor & 1~ms, 1.0 \\
+Rover body, mass & $0.9\times0.65\times0.25$~m, 3~kg \\
+Wheel radius, width, separation & 0.16~m, 0.08~m, 0.76~m \\
+Planner cycle, radio range & 1.0~s, 5.0~m \\
+Planner degree cap, budget & 3, 25 units \\
+\multicolumn{2}{@{}l}{\emph{3D engine}} \\
+Arena radius, footprint radius $R_b$ & 6.0~m, 0.62~m \\
+Fixed step, frame cap, backlog cap & 1/120~s, 0.1~s, 40 steps \\
+Acceleration, braking & 0.9~m/s$^2$, 1.8~m/s$^2$ \\
+Yaw rate, yaw acceleration, rim speed & 1.8~rad/s, 5~rad/s$^2$, 1.25~m/s \\
+Arrival radius, slow-down radius, heading gain & 0.3~m, 1.1~m, 3.2 \\
+Detour trigger & progress $<0.15$~m in 2~s, or blocked $>1.2$~s \\
+Telemetry rate, map rate, radar rate & 5~Hz, 30~Hz, 12~Hz \\
+Session capacity, idle eviction window & 16 sessions, 15~s \\
+\bottomrule
+\end{longtable}
+
+\chapter{Items to Complete Before Submission}
+\label{app:fill}
+
+\noindent\textbf{Delete this appendix before submission.} It lists every
+field that was not filled in automatically, because the information was
+either unknown or must differ between team members.
+
+\begin{enumerate}[label=\arabic*.]
+\item \textbf{Candidate name and register number.} The template requires each
+member to submit an individual copy with only their own name on the
+Declaration, Certificate and Acknowledgement pages. Set the two lines
+\verb|\candidatename| and \verb|\candidatereg| near the top of the main file;
+every page that needs them updates automatically.
+\item \textbf{Submission month.} The cover and title pages say
+\emph{\submissionmonth}, copied from the previous report; change it if the
+submission month differs.
+\item \textbf{Guide title.} The certificate keeps ``Dr./Prof. \guidename'' as
+in the previous report; keep whichever title applies.
+\item \textbf{Dates and signatures.} The Declaration, Certificate and
+Acknowledgement pages leave dates and signatures blank for completion by hand.
+\item \textbf{Names copied from the previous report.} The title, the three
+team members and register numbers, the guide's name, designation and area,
+and the acknowledgement text were copied unchanged; please confirm them.
+\item \textbf{References.} Entries carried over from the previous report are
+unchanged; the entry for Ingole et al. (2023) was already incomplete there and
+needs its venue. The following entries were added for new material and should
+be checked or replaced with the references you supply: Ahuja et al. (1993),
+Auer et al. (2002), Efron and Tibshirani (1993), Forrest et al. (CBC),
+Glover (1989), Jij Inc. (OpenJij), Kadowaki and Nishimori (1998), Koenig and
+Howard (2004), Korsah et al. (2013), Macenski et al. (2022), Sabater and
+Sierra (2005), Spielman and Teng (2011) and three.js.
+\item \textbf{Optional Gazebo screenshot.} Figure~\ref{fig:gz:world} is a
+schematic of the Gazebo world. A screenshot of the running world can be
+captured by starting the container with its graphical option on a machine
+with a display, and added next to it.
+\item \textbf{Optional demo video.} A link or QR code to a recording of the
+3D engine can be added to Chapter~\ref{ch:engine}.
+\end{enumerate}
+
+\noindent\textbf{3D simulation engine.} Chapter~\ref{ch:engine} describes the
+finished engine and uses screenshots captured from it; it contains no
+placeholders or stubs that remain to be filled.

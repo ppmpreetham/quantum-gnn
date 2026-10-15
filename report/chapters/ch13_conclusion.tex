@@ -1,0 +1,126 @@
+\chapter{Conclusion and Future Work}
+\label{ch:conclusion}
+
+\section{Conclusion}
+
+This project set out to allocate tasks in a rover fleet whose communication
+graph changes every few seconds, using a constrained QUBO to prune the graph
+and a trust-aware GNN to assign tasks on what remains. It delivered that
+pipeline, and it delivered something more valuable than the pipeline alone:
+a careful account of what each part contributes, measured against the
+strongest alternatives available.
+
+On the optimisation side, the QUBO encoding was derived cleanly, validated
+against an independent re-derivation and exhaustive enumeration, and shown
+on a five-rover example to reject, by construction, the connectivity traps
+that a soft-score pruner would fall into. The solver audit then showed that
+correctness of the encoding is not enough: four serious annealing-family
+samplers solve only 48 to 64\% of verifiable instances, because the penalty
+walls that make violations unprofitable also make them uncrossable. Moving
+the search onto the feasible manifold removed the barrier; the projected
+annealer is exact on every verifiable instance and within $1.4\times10^{-3}$
+of the exact optimum on every larger one. The exact MILP baseline, finally,
+is both exact and about 100 times faster, which fixes the honest role of the
+QUBO as an encoding for quantum hardware rather than the best classical
+solver.
+
+On the learning side, trust-aware assignment improves mission success by
+8.1 points over a trust-only baseline, with a confidence interval that
+excludes zero, and by 13.8 points over random assignment, in a simulator
+where success depends causally on both the assignment and the pruned
+topology. Message passing adds a small margin that is not yet significant,
+and a cloud-trained readout did not beat the fixed weights on the data
+available.
+
+On the systems side, the pipeline runs unchanged in a containerised Gazebo
+Harmonic and ROS~2 Jazzy world against live odometry, and in an interactive
+3D engine whose rovers drive with exact, provably collision-free
+differential-drive kinematics, whose renderer costs a constant seven draw
+calls, and whose comparisons against weaker baselines are paired and
+statistically annotated.
+
+\section{Key Take-Aways}
+
+\begin{enumerate}[label=\arabic*.]
+\item \textbf{A correct QUBO can still be unsolvable by bit-level annealers.}
+Solver output must be checked against exact ground truth before any
+conclusion is drawn about a formulation.
+\item \textbf{On classical hardware, solve the constrained problem directly.}
+The MILP is exact and two orders of magnitude faster; the QUBO earns its place
+only as a hardware-target encoding.
+\item \textbf{Guarantees have a price.} The constrained pruner is the only
+arm with zero violations, but it costs 2 to 4 points of raw success at ten
+rovers, and no pressure level in our sweep turned the guarantee into a success
+advantage. It is the right choice when violating a constraint is
+disqualifying.
+\item \textbf{Trust is where the assignment gain comes from.} The trust
+model, gates and delivery awareness account for most of the improvement;
+message passing adds a little.
+\item \textbf{Audit the audit.} Logging which constraints were actually
+enforced exposed a silently relaxed budget in the project's own earlier
+results, and changed its headline table.
+\end{enumerate}
+
+\section{Performance Against the Objectives}
+
+Table~\ref{tab:conc:objectives} compares the outcomes with the objectives set
+in Chapter~\ref{ch:intro}.
+
+\begin{table}[htbp]
+\centering
+\caption{Outcome of each objective.}
+\label{tab:conc:objectives}
+\small
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Objective & Outcome \\
+\midrule
+1. Constrained QUBO & Achieved: utility, stability, degree, budget and exact flow-based connectivity in one energy \\
+2. Verified encoding & Achieved: agreement within $2.3\times10^{-10}$; no violated exact optimum in 38 instances \\
+3. Reliable solver & Achieved with a caveat: projected annealer exact on all verifiable instances; generic samplers are not \\
+4. Exact baselines & Achieved: direct MILP and exact linearised solve; MILP is faster than any annealer \\
+5. Trust-aware GNN & Achieved: $+8.1$ pts over trust-only; message-passing margin and trained readout not significant \\
+6. Causal evaluation & Achieved: causal delivery model, repaired baselines, pressure sweep, paired statistics \\
+7. Deployments & Achieved: Gazebo and ROS~2 integration; interactive 3D engine with live comparisons \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+The project also distinguishes clearly between what it built and what it
+used. The QUBO formulation, its verification, the projected annealer, the
+causal simulator, the evaluation protocol, the planner node, the planner
+service and the 3D engine were built in this project. The samplers, the CBC
+solver, Gazebo, ROS~2 and the rendering libraries were used as published.
+
+\section{Benefits}
+
+The work offers three benefits beyond its own pipeline. A reusable
+evaluation discipline: exact referees, repaired baselines, causal metrics,
+paired statistics and relaxation bookkeeping apply to any QUBO-based graph
+method. A ready hardware experiment: the exported Q matrices, with their
+certified optima, are a benchmark on which quantum annealers can be compared
+fairly. And a teaching and demonstration tool: the 3D engine makes constrained
+optimisation, trust learning and their trade-offs visible to people who will
+never read the tables.
+
+\section{Future Work}
+
+\begin{enumerate}[label=\arabic*.]
+\item \textbf{Moving rovers in Gazebo.} Publish velocity commands from the
+planner node, using the controller of the 3D engine, so that the candidate
+graph changes in the physics simulation as it does in the browser.
+\item \textbf{Physical validation.} Build the four-rover ESP32 testbed and
+replace the synthetic reliability and radio models with measured ones.
+\item \textbf{Quantum annealing hardware.} Run the exported Q matrices on a
+quantum annealer and compare against the certified optima, testing whether
+transverse-field dynamics fare better against the penalty barrier.
+\item \textbf{Delivery-aware utility.} The pruner's utility ranks links by
+their own quality and misses links that delivery depends on; adding
+path-criticality to the objective addresses the 0.67 recall directly.
+\item \textbf{Scalable encodings.} Replace the dense matrix and the flow
+family with a sparse or hierarchical encoding to reach hundreds of rovers.
+\item \textbf{Richer trust and on-policy training.} Contextual trust
+estimates and a larger exploration budget for training the readout.
+\item \textbf{Statistical power.} More seeds and scenarios to resolve the
+small margins, such as message passing over the no-graph readout.
+\end{enumerate}

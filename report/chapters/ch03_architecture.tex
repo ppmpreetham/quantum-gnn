@@ -1,304 +1,224 @@
-\section{System Architecture}
-\label{sec:architecture}
+\chapter{System Model and Architecture}
+\label{ch:arch}
 
-This chapter describes how the complete system is organised: the three
-physical tiers on which computation runs, the data flow within and across
-those tiers, the inventory of software components, and the design rules
-that shaped every implementation decision. The architecture is deliberately
-asymmetric. Almost all intelligence lives on one small computer that is
-physically co-located with the rover fleet, while the rovers themselves
-stay minimal and the cloud is used only where its latency does not matter.
+\section{Design Goals}
 
-\subsection{The Three-Tier Deployment Model}
-\label{sec:architecture-tiers}
+Four goals shaped the architecture before any algorithm was chosen. Decisions
+must respect global structure, because link caps, the budget and connectivity
+are properties of the whole kept graph. The fog tier must stay cheap: anything
+that runs every cycle on the Raspberry Pi must cost milliseconds. Learning must
+close the loop, feeding trust learned from outcomes into the next cycle without
+circular dependencies inside a cycle. And every claim must be checkable, with
+each stage testable against an independent reference and mission success
+depending causally on the decisions being evaluated.
 
-We adopt the mist/fog/cloud hierarchy that is standard in edge computing
-for robotics, and map our pipeline onto it as follows.
+\section{Three-Tier Deployment}
 
-\paragraph{Mist tier: the rovers.}
-Each rover carries an ESP-NOW radio and a microcontroller with limited
-memory and no floating-point acceleration to speak of. The rover's
-responsibilities are confined to sensing (link quality to neighbours,
-battery state, odometry), executing the motion commands implied by an
-assigned task, and reporting task outcomes back to the fog node. No
-optimisation, no graph reasoning, and no learning happens on a rover.
-This choice reflects the hardware we target: a rover that must be cheap
-enough to lose in the field cannot host an annealer or a neural network.
-ESP-NOW provides short-range, low-power, peer-to-peer frames without the
-overhead of an association-based protocol, which suits the dense, rapidly
-changing local topologies we study.
+The deployment follows the three-tier split of Fig.~\ref{fig:arch:tiers}.
+Rovers in the mist tier sense their state and exchange telemetry over
+ESP-NOW. A gateway forwards the telemetry over Wi-Fi to the fog tier, a
+Raspberry Pi that maintains the dynamic graph, prunes it, scores the rovers
+and assigns tasks. The cloud tier, a laptop or server reached over MQTT,
+retrains the GNN readout and runs the heavy optimisation experiments. Task
+assignments travel back down the same path.
 
-\paragraph{Fog tier: the fleet brain.}
-A single Raspberry Pi class computer sits within radio range of the fleet
-and runs the entire per-cycle decision loop: it assembles the candidate
-graph from rover reports, formulates and solves the constrained QUBO edge
-pruning problem, scores rovers with the trust-aware GNN on the pruned
-graph, and performs the greedy capacity-aware task assignment. This tier
-is the reason for the most consequential engineering constraint of the
-project: \emph{all per-cycle numerical code is pure NumPy over tiny
-matrices}. A cycle must complete in well under the control period on a
-few-watt ARM processor, so there is no room for a deep learning
-framework, a sparse linear algebra stack, or a commercial solver. Every
-matrix in the inference path is small enough that dense NumPy with a
-handful of temporaries is both the simplest and the fastest honest
-option. The message-passing round of the GNN is a single adjacency
-product followed by an elementwise nonlinearity, and the projected edge
-annealer manipulates flat bit vectors and small dictionaries rather than
-any external optimisation library.
-
-\paragraph{Cloud tier: training, amortised solves, analytics.}
-Anything whose latency does not couple into the control loop is pushed to
-the cloud tier. Three workloads live there. First, offline training of the
-GNN readout layer on logged outcomes; we report in Chapter 6 that this
-training did not beat the fixed readout on held-out data, but the
-infrastructure remains part of the architecture. Second, amortised heavy
-solves: the pruning QUBO can be re-solved every $k$ cycles rather than
-every cycle, and heavy verification solves (the exact MILP baseline, or
-cross-checks of annealer output) are cloud jobs, not field jobs. Third,
-fleet-level analytics over mission logs.
-
-Figure~\ref{fig:tiers} summarises the deployment and the data that crosses
-tier boundaries.
-
-\begin{figure}[ht]
+\begin{figure}[htbp]
 \centering
-\resizebox{0.95\textwidth}{!}{%
 \begin{tikzpicture}[
-  font=\small,
-  tier/.style={draw, rounded corners=2pt, thick, inner sep=8pt},
-  title/.style={font=\bfseries\small},
-  comp/.style={draw, fill=black!4, rounded corners=1pt,
-               inner sep=3pt, font=\footnotesize, align=center},
-  flow/.style={-{Stealth[length=2.5mm]}, thick},
-  lbl/.style={font=\scriptsize, align=center, inner sep=2pt},
+  tier/.style={draw, rounded corners, minimum width=7.4cm, minimum height=2.2cm, align=center},
+  box/.style={draw, fill=white, rounded corners=1pt, align=center, font=\small},
+  lbl/.style={font=\bfseries\small},
+  link/.style={-{Stealth[length=2.5mm]}, thick},
 ]
-% --- Mist tier box ---
-\node[comp] (rovers) at (0,1.0) {rover 1 \ldots\ rover $n$\\[-1pt]
-  \scriptsize ESP-NOW radio, sensors, actuators};
-\node[comp, below=4pt of rovers] (mistnote) {sense links, battery, odometry\\
-  execute tasks, report outcomes};
-\begin{scope}[on background layer]
-  \node[tier, fit=(rovers)(mistnote), label={[title]north:Mist tier (rovers)}] (mist) {};
-\end{scope}
-
-% --- Fog tier box ---
-\node[comp, right=3.4cm of rovers] (qubo) {QUBO builder\\+ projected edge annealer};
-\node[comp, below=4pt of qubo] (gnn) {trust model + trust-aware GNN};
-\node[comp, below=4pt of gnn] (assign) {greedy capacity-aware assigner};
-\begin{scope}[on background layer]
-  \node[tier, fit=(qubo)(gnn)(assign),
-        label={[title]north:Fog tier (Raspberry Pi class)}] (fog) {};
-\end{scope}
-
-% --- Cloud tier box ---
-\node[comp, right=3.4cm of qubo] (train) {readout training\\(offline)};
-\node[comp, below=4pt of train] (heavy) {amortised heavy solves\\exact MILP verification};
-\node[comp, below=4pt of heavy] (analytics) {fleet-level analytics};
-\begin{scope}[on background layer]
-  \node[tier, fit=(train)(heavy)(analytics),
-        label={[title]north:Cloud tier (offline)}] (cloud) {};
-\end{scope}
-
-% --- Flows: mist <-> fog ---
-\draw[flow] ($(mist.east)+(0,0.35)$) -- node[lbl, above]{state reports\\(links, battery, outcomes)}
-  ($(fog.west)+(0,0.35)$);
-\draw[flow] ($(fog.west)-(0,0.35)$) -- node[lbl, below]{task assignments}
-  ($(mist.east)-(0,0.35)$);
-
-% --- Flows: fog <-> cloud ---
-\draw[flow] ($(fog.east)+(0,0.5)$) -- node[lbl, above]{mission logs, QUBO\\instances, outcomes}
-  ($(cloud.west)+(0,0.5)$);
-\draw[flow] ($(cloud.west)-(0,0.5)$) -- node[lbl, below]{readout weights\\(rare updates)}
-  ($(fog.east)-(0,0.5)$);
-\end{tikzpicture}}
-\caption{Three-tier deployment. The mist tier (rovers) senses and acts;
-the fog tier runs the complete per-cycle decision loop on a Raspberry Pi
-class computer using pure NumPy; the cloud tier performs offline training,
-amortised or verification-grade solves, and fleet analytics.}
-\label{fig:tiers}
+\node[tier, fill=blue!4] (cloud) at (0,5.0) {};
+\node[lbl] at (0,5.85) {Cloud (laptop / server)};
+\node[box] at (-1.8,4.85) {optimisation\\experiments};
+\node[box] at (1.8,4.85) {GNN readout\\training};
+\node[tier, fill=green!5] (fog) at (0,2.3) {};
+\node[lbl] at (0,3.15) {Fog (Raspberry Pi)};
+\node[box] at (-2.5,2.15) {graph\\builder};
+\node[box] at (0,2.15) {QUBO\\pruning};
+\node[box] at (2.5,2.15) {trust GNN +\\assignment};
+\node[tier, fill=orange!6] (mist) at (0,-0.4) {};
+\node[lbl] at (0,0.45) {Mist (ESP32 rovers)};
+\foreach \x/\n in {-2.4/1,-0.8/2,0.8/3,2.4/4}{\node[box, circle, inner sep=2pt] at (\x,-0.6) {R\n};}
+\draw[link] (fog) -- node[right, font=\small]{Wi-Fi / MQTT} (cloud);
+\draw[link] (mist) -- node[right, font=\small]{ESP-NOW via gateway} (fog);
+\end{tikzpicture}
+\caption[Three-tier deployment.]{Three-tier deployment. Telemetry flows up and task assignments flow
+down; expensive solving and training run in the cloud or on the fog device
+depending on the cycle budget.}
+\label{fig:arch:tiers}
 \end{figure}
 
-\subsection{Per-Cycle Data Flow}
-\label{sec:architecture-flow}
+The tier assignment is a design decision: rovers have too little compute for
+anything beyond sensing and radio, the fog tier must meet a per-cycle deadline,
+and the cloud has none. Section~\ref{sec:res:staleness} quantifies a middle
+ground in which the cloud solves every few cycles and the fog device reuses the
+latest decision in between.
 
-One control cycle proceeds through six stages, which we describe in order,
-noting what crosses a tier boundary at each step.
+\section{Graph Model and Features}
 
-\paragraph{Stage 1: graph assembly (mist to fog).}
-Each rover reports its current estimate of link quality to every
-neighbour it can hear, its battery level, its compute availability, and
-its position estimate. These reports travel over ESP-NOW to the fog node,
-which merges them with its own per-node records (trust, freshness of last
-contact, task criticality, processing cost) to build the full dynamic
-candidate graph: every admissible rover pair is an edge, and every edge
-carries a feature vector in $[0,1]^7$ covering trust, link quality,
-battery, proximity, freshness, task criticality, and processing cost.
+At cycle $t$ the fleet is the undirected graph $G_t=(V,E_t)$, with an edge
+whenever two rovers are within radio range. Table~\ref{tab:arch:features}
+lists the features attached to every edge and every rover. All continuous
+features are normalised to $[0,1]$. Trust and battery on an edge take the
+minimum over the two endpoints, so a link is only as good as its weaker end,
+which is the conservative choice for communication reliability.
 
-\paragraph{Stage 2: constrained QUBO pruning (fog).}
-The candidate graph is denser than the GNN needs, and dense graphs dilute
-the trust signal and increase inference cost. The QUBO builder encodes
-edge selection as a binary quadratic program: a linear utility per edge
-(the learned-weight combination of the seven features), soft penalties
-for graph size and for churn against the previous cycle's decisions, and
-hard constraints with dominant penalty weights that enforce per-node
-degree limits, a global processing budget, and single-commodity flow
-connectivity from a root to every required node. The production solver,
-the projected edge annealer, moves directly in the space of feasible edge
-sets: it toggles or swaps edges and repairs each candidate via an exact
-slack-and-flow recomputation, so infeasible states are never committed.
-The output is a pruned subgraph plus, for auditability, the raw solution
-vector and a list of any violated constraints.
-
-\paragraph{Stage 3: trust-aware scoring (fog).}
-The trust model maintains an exponentially weighted moving average of
-per-node reliability, with ageing so that stale evidence decays. The GNN
-takes the pruned adjacency, per-node features (trust, battery, available
-compute, capability), and performs one message-passing round with a
-sigmoid nonlinearity, then a linear readout scores each rover against the
-current task requirements. All of this is dense NumPy on matrices of
-order $n \times n$ with $n$ the fleet size, comfortably inside the fog
-compute budget.
-
-\paragraph{Stage 4: assignment (fog to mist).}
-A greedy capacity-aware matcher assigns tasks to the highest-scoring
-rovers that still have free capacity. The assignments are radioed down to
-the rovers, which execute them.
-
-\paragraph{Stage 5: outcome sampling (mist).}
-Task outcomes are realised on the rovers. In simulation, outcomes are
-sampled from a hidden, spatially correlated reliability field, and the
-probability of successful delivery depends causally on the pruned
-topology through the paths the assignment actually uses; this design,
-introduced after reviewer pressure, prevents the evaluation from being
-merely correlational.
-
-\paragraph{Stage 6: trust update (fog, then feedback).}
-Reported outcomes update the trust model, closing the loop: the updated
-trust values are inputs to the edge features of the next cycle. Mission
-logs, QUBO instances, and outcome traces are streamed or batched to the
-cloud tier for the offline workloads described above; the only
-cloud-to-fog traffic in normal operation is an occasional readout-weight
-update.
-\subsection{Component Inventory}
-\label{sec:architecture-components}
-
-Table~\ref{tab:components} lists the components of the system by role.
-Two deliberate asymmetries are worth flagging. First, two annealers exist:
-a bit-level simulated annealer that manipulates raw bit strings and is
-used \emph{only} as a benchmark subject, and the projected edge annealer
-that is the production solver. The benchmark exists precisely because the
-bit-level solver performs poorly (it cannot cross penalty barriers and
-returned infeasible states on most benchmark instances), which is itself
-one of our audit findings. Second, the exact MILP baseline (CBC via PuLP)
-is faster and exact on our instance sizes, which we report honestly as a
-negative result for QUBO on classical hardware; it serves as the ground
-truth oracle for the solver audit.
-
-\begin{table}[ht]
+\begin{table}[htbp]
 \centering
-\caption{Component inventory. ``Tier'' indicates where the component runs
-in deployment; benchmark and verification components are cloud-side or
-development-side tools.}
-\label{tab:components}
-{\small
-\begin{tabular}{@{}llll@{}}
+\caption{Edge and rover features used by the pruner and the GNN.}
+\label{tab:arch:features}
+\small
+\begin{tabularx}{\linewidth}{@{}l l X@{}}
 \toprule
-Component & Role & Tier & Technology \\
+Symbol & Name & Definition \\
 \midrule
-QUBO builder & constrained edge-pruning encoding & fog & NumPy \\
-Bit-level annealer & benchmark subject only & cloud/dev & NumPy \\
-Projected edge annealer & production QUBO solver & fog & NumPy \\
-Trust model & EWMA reliability with ageing & fog & NumPy \\
-Trust-aware GNN & rover scoring on pruned graph & fog & NumPy \\
-Greedy assigner & capacity-aware task matching & fog & NumPy \\
-Exact MILP baseline & ground-truth oracle, audit & cloud & CBC via PuLP \\
-Scaling runner & fleet-size experiments & cloud & NumPy \\
-Hostile test suite & 491 checks, sections A to N & dev & Python stdlib \\
-Causal simulation harness & end-to-end evaluation, statistics & cloud & NumPy \\
-Physics integration & realistic rover dynamics & cloud & Gazebo, ROS 2, Docker \\
-Fleet console & live visualisation and tuning & dev & three.js, React, Python \\
+$T_e$ & edge trust & $\min(T_i^{t-1},T_j^{t-1})$, from the previous cycle's trust model \\
+$L_e$ & link quality & measured quality of the last observation, with noise \\
+$B_e$ & edge battery & $\min(B_i,B_j)$ \\
+$P_e$ & proximity & $1-d_{ij}/d_{\max}$ for distance $d_{ij}$ and radio range $d_{\max}$ \\
+$A_e$ & freshness & $\exp(-\Delta t_e/\tau)$ since the last successful observation \\
+$C_e$ & task criticality & largest criticality of the tasks at the two endpoints \\
+$c_e$ & processing cost & $\max\bigl(1,\lfloor 10\,\bar c_e\rceil\bigr)$ integer budget units \\
+\midrule
+$T_i$ & rover trust & online EWMA estimate (Chapter~\ref{ch:gnn}) \\
+$B_i$ & battery & state of charge \\
+$\ell_i$ & load & fraction of compute in use; $1-\ell_i$ is available compute \\
+$q_i$ & capability & static hardware capability score \\
 \bottomrule
-\end{tabular}
-}
+\end{tabularx}
 \end{table}
 
-The \textbf{causal simulation harness} drives the whole pipeline
-end-to-end against the hidden reliability field and hosts the pruning
-baselines (no pruning, threshold pruning, top-$k$ pruning, full graph)
-and assignment baselines (trust-only, no-graph, random) used in the
-ablation studies. It reports paired bootstrap confidence intervals and
-permutation $p$-values so that every comparative claim carries an
-uncertainty statement.
+The raw processing cost gives the budget a physical meaning. Transmission time
+grows with distance and endpoint queues add processing time, so
+\begin{equation}
+\bar c_e=0.1+0.5\,(1-P_e)+0.15\,(\ell_i+\ell_j),
+\label{eq:arch:cost}
+\end{equation}
+and the integer cost $c_e$ lies between 1 and 10. Because every edge costs at
+least one unit, any spanning tree on $n$ rovers costs at least $n-1$ units; the
+3D engine of Chapter~\ref{ch:engine} uses this bound to warn when a chosen
+budget can never be met.
 
-The \textbf{physics integration} replaces the abstract kinematics of the
-simulator with Gazebo Harmonic under ROS 2 Jazzy, packaged in Docker so
-that the planner node runs unmodified against simulated physics; this
-validates that the fog-side loop tolerates realistic sensing noise and
-actuation latency.
+The usefulness of an edge is summarised by a weighted utility
+\begin{equation}
+U_e=0.25\,T_e+0.25\,L_e+0.10\,B_e+0.10\,P_e+0.15\,A_e+0.15\,C_e,
+\label{eq:arch:utility}
+\end{equation}
+whose weights sum to one, so $U_e\in[0,1]$. The same utility is used by every
+pruning baseline, which keeps comparisons between pruners fair.
 
-The \textbf{fleet console} is a browser application: a custom three.js
-rendering engine (instanced meshes, a single instanced shader draw for
-link arcs) with a React interface and Zustand state management, served by
-a Python standard-library HTTP backend that steps live simulation
-sessions and exposes in-place parameter tuning. It exists for
-demonstration and for interactive exploration of solver parameters, and
-its comparison menu names the baselines that beat our pipeline rather
-than hiding them.
+\section{One Pipeline Cycle}
 
-The \textbf{hostile test suite} deserves special mention as an
-architectural component rather than an afterthought. Its 491 checks,
-organised into sections A to N, include an independent re-derivation of
-the QUBO energy that is cross-verified against the quadratic form itself,
-brute-force enumeration of small instances as ground truth, exact MILP
-cross-checks on larger instances, and sensitivity sweeps over annealer
-hyperparameters and penalty scales.
+Each control cycle executes the pipeline of Fig.~\ref{fig:arch:cycle}. The
+graph builder turns telemetry into $G_t$ with fresh features. The pruner
+selects the working subgraph subject to the constraints. The GNN scores every
+rover for every pending task on the pruned graph. The assignment stage
+matches tasks to rovers greedily under per-rover capacity. Finally the
+outcomes are observed and trust is updated.
 
-\subsection{Design Rules}
-\label{sec:architecture-rules}
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  stage/.style={draw, rounded corners=2pt, minimum height=1cm, align=center, font=\small, fill=blue!5},
+  arr/.style={-{Stealth[length=2.5mm]}, thick},
+]
+\node[stage] (tel) at (0,0) {rover\\telemetry};
+\node[stage, right=0.55cm of tel] (graph) {dynamic\\graph $G_t$};
+\node[stage, right=0.55cm of graph] (qubo) {constrained\\QUBO pruning};
+\node[stage, right=0.55cm of qubo] (gnn) {trust-aware\\GNN scoring};
+\node[stage, right=0.55cm of gnn] (assign) {capacity-aware\\assignment};
+\node[stage, below=1.1cm of qubo] (trust) {trust update\\EWMA + aging};
+\draw[arr] (tel) -- (graph);
+\draw[arr] (graph) -- (qubo);
+\draw[arr] (qubo) -- (gnn);
+\draw[arr] (gnn) -- (assign);
+\draw[arr] (assign.south) |- (trust.east);
+\draw[arr] (trust.north) -- (qubo.south);
+\draw[arr] (trust.east) -- ++(0.3,0) |- (gnn.south);
+\end{tikzpicture}
+\caption[One pipeline cycle.]{One pipeline cycle. Trust from the previous cycle feeds both the
+pruner's edge features and the GNN's node features, closing the loop without
+a circular dependency inside a cycle.}
+\label{fig:arch:cycle}
+\end{figure}
 
-Four rules, adopted early and enforced throughout, explain most of the
-concrete choices above.
 
-\paragraph{Rule 1: the fog compute budget is real.}
-Every per-cycle component must run in milliseconds on a Raspberry Pi
-class machine. This rules out deep learning frameworks (hence a GNN that
-is one dense message-passing round in NumPy), rules out heavy sparse or
-optimisation libraries in the inference path (hence a hand-rolled
-projected annealer), and motivates QUBO pruning in the first place: the
-pruned graph is cheaper to score, so the pruner partially pays for
-itself.
+\section{The Mission Model}
 
-\paragraph{Rule 2: no heavy dependencies anywhere.}
-The numerical stack depends on NumPy alone. The exact baseline uses PuLP
-with CBC, both permissively licensed and installable without system
-libraries; notably, we avoid SciPy entirely. The web backend uses only
-the Python standard library. The physics simulator is containerised with
-Docker precisely so that its heavier ROS 2 dependency chain is isolated
-from the numerical core.
+A pipeline that prunes the graph is only meaningful if pruning can change the
+outcome. The mission model therefore splits success into two causally linked
+events.
 
-\paragraph{Rule 3: every claim is paired with a test.}
-The 491-check hostile suite is co-developed with the code, not appended
-to it. The solver exactness rates quoted in later chapters are enforced
-by floor checks in the suite, the simulation statistics are regression
-checked, and new components are expected to arrive with their own hostile
-tests.
+\begin{definition}[Execution and delivery]
+An assigned rover $i$ \emph{executes} its task with probability equal to its
+hidden reliability, provided its battery is above 15\%. The result must then
+be \emph{delivered} to the root rover over the kept subgraph; delivery
+succeeds with probability equal to the delivery factor
+\[
+p_i=\max_{\pi:\,i\to r}\ \min_{e\in\pi} L_e,
+\]
+the weakest link quality on the \emph{widest} path $\pi$ from $i$ to the root
+$r$ in the kept graph ($p_r=1$, and $p_i=0$ if no path exists). A task
+succeeds when both events occur.
+\end{definition}
 
-\paragraph{Rule 4: negative results are kept.}
-The architecture is an audit, not only a proposal, and the system is
-built to surface unfavourable comparisons rather than suppress them. The
-exact MILP baseline that dominates the QUBO solver on classical hardware
-is a first-class component; the readout-training null result is reported
-with its $p$-value; the pruner comparison in which threshold pruning wins
-on raw mission success at the ten-rover scale appears in the results with
-its significance test. We regard these findings as outputs of the system,
-on equal footing with its successes.
+Execution outcomes drive the trust update, so trust estimates reliability.
+Delivery depends on the kept edges, so every pruning decision has a real,
+measurable effect on mission success. An earlier version of the simulator
+lacked this coupling: success depended on rover reliability alone and the
+whole pruning layer was causally disconnected from the metric it was meant to
+improve. Restoring the coupling was a precondition for every end-to-end claim
+in Chapter~\ref{ch:results}.
 
-\subsection{Summary}
-The system places a complete decision loop on one modest fog computer by
-discipline rather than by excess compute: a minimal mist tier, a
-NumPy-only fog tier running pruning, scoring, and assignment, and a
-cloud tier reserved for training, verification-grade solves, and
-analytics. The
-surrounding tooling, from the MILP oracle to the hostile suite to the
-fleet console, exists to make the central claims falsifiable and the
-negative results impossible to misplace.
+\section{Software Organisation}
+
+The software mirrors the stages of Fig.~\ref{fig:arch:cycle} and adds the
+verification and simulation layers around them. Table~\ref{tab:arch:software}
+lists the components by responsibility; they are written in Python with
+NumPy, except the 3D engine, which is written in TypeScript.
+
+\begin{table}[htbp]
+\centering
+\caption{Software components and their responsibilities.}
+\label{tab:arch:software}
+\small
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Component & Responsibility \\
+\midrule
+QUBO builder & Assembles the Q matrix with slack and flow variables, checks inputs, repairs edge sets to feasibility and exports the matrix \\
+Solvers & Projected edge annealing (production) and bit-level simulated annealing (baseline) \\
+Exact baselines & Direct MILP of the constrained problem and an exact linearised solve of the Q matrix, both with CBC \\
+Trust GNN & Two-layer trust-weighted message passing, gating and scoring \\
+Trust model and assignment & EWMA trust with aging; capacity-aware greedy assignment; readout training \\
+Closed-loop simulator & Mobility, radio, hidden reliability, faults, pruner and assigner arms, metrics and statistics \\
+Experiment drivers & Scaling runs, a 16-seed pruner benchmark and the constraint-pressure sweeps \\
+Verification suite & Roughly five hundred automated checks in fourteen sections \\
+Gazebo planner node & Runs the pipeline against live odometry inside ROS~2 \\
+Planner service and 3D engine & Live sessions over HTTP and the interactive browser simulation \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\section{Physical Testbed Concept}
+
+The intended physical testbed is four rovers on a flat surface, each an
+ESP32-class board on a small differential-drive chassis, with ESP-NOW links
+whose quality varies with distance (Fig.~\ref{fig:arch:testbed}). A degraded
+link, such as the one between the third and fourth rover in the figure, is
+exactly the kind of edge the pruner is meant to drop. The testbed has not yet
+been built; all quantitative results in this report come from simulation, and
+the Gazebo world of Chapter~\ref{ch:gazebo} reproduces the same four-rover
+line-up in a physics engine.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.72\linewidth]{figures/fig_testbed.pdf}
+\caption{Physical testbed concept: four rovers on a flat surface with
+ESP-NOW links and their communication ranges; the degraded link is a pruning
+candidate.}
+\label{fig:arch:testbed}
+\end{figure}

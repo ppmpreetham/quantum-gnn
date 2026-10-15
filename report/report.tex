@@ -1,63 +1,353 @@
-\documentclass[11pt]{article}
+% =====================================================================
+%  BCSE497J project report.
+%  Layout follows the school template: A4, Times New Roman 12 pt,
+%  left margin 3.81 cm and 2.54 cm elsewhere, 1.5 line spacing, page
+%  numbers at the bottom centre (roman in the front matter), chapter
+%  heading 16 pt bold, section 14 pt CAPS, subsection 12 pt CAPS.
+%
+%  Every field the authors still have to complete is marked
+%  [TO FILL: ...] in bold and is listed in the last appendix.
+% =====================================================================
+\documentclass[12pt,a4paper,oneside]{report}
 
-\usepackage[a4paper,margin=2.4cm]{geometry}
-\usepackage{amsmath,amssymb}
+\usepackage[a4paper,left=3.81cm,right=2.54cm,top=2.54cm,bottom=2.54cm,footskip=1.1cm]{geometry}
+\usepackage{iftex}
+\usepackage{amsmath,amsthm}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage{newtxtext,newtxmath}
+\else
+  \usepackage{fontspec}
+  % Times New Roman when installed; otherwise its metric twin TeX Gyre Termes
+  \IfFontExistsTF{Times New Roman}{\setmainfont{Times New Roman}}{%
+    \setmainfont{texgyretermes}[Extension=.otf, UprightFont=*-regular,
+      BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]}
+  \usepackage{unicode-math}
+  \setmathfont{texgyretermes-math.otf}
+\fi
 \usepackage{graphicx}
 \usepackage{booktabs}
 \usepackage{multirow}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{longtable}
+\usepackage{enumitem}
+\usepackage{setspace}
+\usepackage{titlesec}
+\usepackage{tocloft}
+\usepackage{float}
 \usepackage{tikz}
-\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds}
+\usetikzlibrary{arrows.meta,positioning,shapes.geometric,calc,fit,backgrounds,decorations.pathreplacing}
 \usepackage{pgfplots}
 \pgfplotsset{compat=1.18}
-\usepackage{hyperref}
-\usepackage{microtype}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
 \usepackage{caption}
-\captionsetup{font=small,labelfont=bf}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
 
-\newcommand{\code}[1]{\texttt{#1}}
+% ---------------- body text: 12 pt, 1.5 spacing, justified ----------------
+\onehalfspacing
+\setlength{\parindent}{1.27cm}
+\setlength{\parskip}{4pt}
+\clubpenalty=10000
+\widowpenalty=10000
+\displaywidowpenalty=10000
+\raggedbottom
+\captionsetup{font=small,labelfont=bf,labelsep=colon,skip=6pt}
+\setlist{itemsep=2pt,topsep=4pt}
+
+% ---------------- headings as in the template ----------------
+\renewcommand{\chaptername}{Chapter}
+\titleformat{\chapter}[display]
+  {\normalfont\centering\bfseries}
+  {\fontsize{12}{14}\selectfont\chaptertitlename\ \thechapter}
+  {6pt}
+  {\fontsize{16}{19}\selectfont}
+\titlespacing*{\chapter}{0pt}{0pt}{24pt}
+\titleformat{\section}
+  {\normalfont\fontsize{14}{17}\selectfont}{\thesection}{1em}{\MakeUppercase}
+\titlespacing*{\section}{0pt}{14pt}{8pt}
+\titleformat{\subsection}
+  {\normalfont\fontsize{12}{14.5}\selectfont}{\thesubsection}{1em}{\MakeUppercase}
+\titlespacing*{\subsection}{0pt}{10pt}{6pt}
+\titleformat{\subsubsection}[runin]
+  {\normalfont\bfseries}{}{0pt}{}[.]
+\titlespacing*{\subsubsection}{0pt}{8pt}{0.6em}
+\setcounter{secnumdepth}{2}
+\setcounter{tocdepth}{1}
+
+% ---------------- contents and lists ----------------
+\renewcommand{\contentsname}{CONTENTS}
+\renewcommand{\listfigurename}{LIST OF FIGURES}
+\renewcommand{\listtablename}{LIST OF TABLES}
+\renewcommand{\bibname}{REFERENCES}
+\renewcommand{\cftchappresnum}{Chapter }
+\setlength{\cftchapnumwidth}{5.6em}
+\renewcommand{\cfttoctitlefont}{\hfill\normalfont\fontsize{14}{17}\selectfont\bfseries}
+\renewcommand{\cftaftertoctitle}{\hfill}
+\renewcommand{\cftloftitlefont}{\hfill\normalfont\fontsize{14}{17}\selectfont\bfseries}
+\renewcommand{\cftafterloftitle}{\hfill}
+\renewcommand{\cftlottitlefont}{\hfill\normalfont\fontsize{14}{17}\selectfont\bfseries}
+\renewcommand{\cftafterlottitle}{\hfill}
+\renewcommand{\cftchapleader}{\cftdotfill{\cftdotsep}}
+\cftsetpnumwidth{2.2em}
+\cftsetrmarg{3.2em}
+
+% ---------------- textbook elements ----------------
+\theoremstyle{definition}
+\newtheorem{definition}{Definition}[chapter]
+\newtheorem{example}{Example}[chapter]
+\theoremstyle{plain}
+\newtheorem{proposition}{Proposition}[chapter]
+\theoremstyle{remark}
+\newtheorem{remark}{Remark}[chapter]
+\renewcommand{\algorithmicrequire}{\textbf{Input:}}
+\renewcommand{\algorithmicensure}{\textbf{Output:}}
+
 \newcommand{\fillme}[1]{\textbf{[TO FILL: #1]}}
+\newcommand{\pp}{\,pp}
 
-\title{Trust-Aware Task Allocation in Dynamic Rover Networks\\
-with Constrained QUBO Edge Pruning:\\
-a Complete Project Report}
-\author{\fillme{author names, one per line}}
-\date{\fillme{submission date}}
+% ---------------- front-matter fields ----------------
+% Title, team and guide are taken unchanged from the previous report.
+\newcommand{\projecttitle}{Quantum-Inspired Edge Pruning and Trust-Aware Graph Neural Inference for Task Allocation in Dynamic Rover Networks}
+\newcommand{\teammembers}{%
+  NANDANA SATISH (23BAI1568)\\[4pt]
+  PREETHAM PEMMASANI (23BRS1346)\\[4pt]
+  BIRESH BISWAS (23BRS1255)}
+\newcommand{\submissionmonth}{October, 2026}
+\newcommand{\guidename}{Selvam D}
+\newcommand{\guidedesignation}{Assistant Professor Senior Grade I}
+\newcommand{\guidearea}{Quantum Computing and Theoretical Computer Science}
+% Each member submits an individual copy: set these two lines to your own details.
+\newcommand{\candidatename}{\fillme{your name}}
+\newcommand{\candidatereg}{\fillme{your register number}}
+
+% Front-matter page heading: centred, 14 pt, bold, underlined, CAPS.
+\newcommand{\frontheading}[1]{%
+  \begin{center}{\fontsize{14}{17}\selectfont\bfseries\underline{#1}}\end{center}\vspace{10pt}}
 
 \begin{document}
-\maketitle
 
-\begin{abstract}
-\fillme{abstract text; 150 to 250 words summarizing motivation, pipeline,
-verification approach, headline results, and the honest limitations}
-\end{abstract}
+% ======================= COVER PAGE AND TITLE PAGE =======================
+\newcommand{\titleblock}{%
+  \begin{center}
+    {\fontsize{12}{14}\selectfont\itshape A project report on\par}
+    \vspace{1.0cm}
+    {\fontsize{20}{26}\selectfont\bfseries\MakeUppercase{\projecttitle}\par}
+    \vspace{1.0cm}
+    {\fontsize{14}{17}\selectfont\itshape Submitted in partial fulfillment for the award of the degree of\par}
+    \vspace{0.7cm}
+    {\fontsize{22}{27}\selectfont\bfseries Bachelor of Technology in Computer Science and Engineering (Artificial Intelligence and Machine Learning)\par}
+    \vspace{0.7cm}
+    {\fontsize{14}{17}\selectfont\itshape by\par}
+    \vspace{0.5cm}
+    {\fontsize{16}{19}\selectfont\bfseries \teammembers\par}
+    \vfill
+    \includegraphics[width=7.2cm]{figures/vit-logo.jpg}\par
+    \vspace{0.6cm}
+    {\fontsize{16}{19}\selectfont\bfseries SCHOOL OF COMPUTER SCIENCE AND ENGINEERING\par}
+    \vspace{0.3cm}
+    {\fontsize{12}{14}\selectfont \submissionmonth\par}
+  \end{center}}
 
+\begin{titlepage}
+\singlespacing
+\titleblock
+\end{titlepage}
+
+\begin{titlepage}
+\singlespacing
+\titleblock
+\end{titlepage}
+
+\pagenumbering{roman}
+\setcounter{page}{1}
+
+% ============================== DECLARATION ==============================
+\begin{center}\includegraphics[width=6cm]{figures/vit-logo.jpg}\end{center}
+\vspace{0.8cm}
+\frontheading{DECLARATION}
+
+I hereby declare that the thesis entitled ``\projecttitle'' submitted by
+\candidatename\ (\candidatereg), for the award of the degree of Bachelor of
+Technology in Computer Science and Engineering, Vellore Institute of
+Technology, Chennai is a record of bonafide work carried out by me under the
+supervision of \guidename.
+
+I further declare that the work reported in this thesis has not been
+submitted and will not be submitted, either in part or in full, for the
+award of any other degree or diploma in this institute or any other
+institute or university.
+
+\vspace{2cm}
+\noindent\textbf{Place:} Chennai\\
+\noindent\textbf{Date:} \hfill \textbf{Signature of the Candidate}\\[4pt]
+\noindent\hfill\textbf{\candidatename}
+\clearpage
+
+% ============================== CERTIFICATE ==============================
+\begin{center}
+\includegraphics[width=5.2cm]{figures/vit-logo.jpg}\\[0.3cm]
+{\fontsize{14}{17}\selectfont\bfseries School of Computer Science and Engineering\par}
+\vspace{0.4cm}
+{\fontsize{14}{17}\selectfont\bfseries\underline{CERTIFICATE}\par}
+\end{center}
+\vspace{0.4cm}
+
+This is to certify that the report entitled ``\projecttitle'' is prepared
+and submitted by \candidatename\ (\candidatereg) to Vellore Institute of
+Technology, Chennai, in partial fulfillment of the requirement for the award
+of the degree of Bachelor of Technology in Computer Science and Engineering
+(Artificial Intelligence and Machine Learning) is a bonafide record carried
+out under my guidance. The project fulfills the requirements as per the
+regulations of this University and in my opinion meets the necessary
+standards for submission. The contents of this report have not been
+submitted and will not be submitted either in part or in full, for the award
+of any other degree or diploma and the same is certified.
+
+\vspace{0.7cm}
+\noindent\textbf{Signature of the Guide:}\\[4pt]
+\noindent\textbf{Name:} Dr./Prof. \guidename\\[4pt]
+\noindent\textbf{Date:}
+
+\vspace{0.8cm}
+\noindent\begin{tabular}{@{}p{0.48\linewidth}p{0.48\linewidth}@{}}
+\textbf{Signature of the Examiner} & \textbf{Signature of the Examiner}\\[6pt]
+Name: & Name:\\[6pt]
+Date: & Date:\\
+\end{tabular}
+
+\vspace{0.8cm}
+\begin{center}
+Approved by the Head of Department,\\
+Computer Science and Engineering\\
+(Artificial Intelligence and Machine Learning)\\[6pt]
+Name: Dr. Tulasi Prasad Sariki\\
+Date:\\[0.6cm]
+(Seal of SCHOOL YOU BELONG TO)
+\end{center}
+\clearpage
+
+% =============================== ABSTRACT ================================
+\phantomsection
+\addcontentsline{toc}{chapter}{Abstract}
+\frontheading{ABSTRACT}
+
+Rover teams coordinate over low-power radio links whose quality changes from
+second to second, so the graph of who can talk to whom is a moving target. This
+project builds and audits a pipeline for allocating tasks over that graph. Each
+cycle, a constrained quadratic unconstrained binary optimisation (QUBO) model
+prunes the graph to a working subgraph that respects per-rover link caps, a
+processing budget and exact connectivity of the mission rovers; a lightweight
+trust-aware graph neural network scores the rovers on the pruned graph; a
+greedy stage assigns the tasks; and an online trust model learns from the
+outcomes. The encoding agrees with an independent re-derivation to within
+$2.3\times10^{-10}$. Four annealing-family samplers find the exact optimum on
+only 48 to 64\% of verifiable instances, whereas a feasibility-projected
+annealer developed here is exact on all of them and matches exact
+mixed-integer optima on 95\% of larger ones; an exact mixed-integer solver is,
+however, about 100 times faster, so the QUBO is positioned as a
+quantum-hardware encoding. In a causal closed-loop simulator, trust-aware
+assignment beats a trust-only baseline by 8.1 percentage points (95\% CI
+$[+4.2,+11.7]$, $p=0.016$) and random assignment by 13.8, while the QUBO
+pruner, the only arm with zero constraint violations, trades 2 to 4 points of
+raw success for its guarantees. The pipeline also runs in a containerised
+Gazebo and ROS~2 world against live odometry, and in a purpose-built
+interactive 3D engine with real-time differential-drive rovers and live paired
+comparisons.
+
+\vspace{8pt}
+\noindent\textbf{Keywords:} QUBO, simulated annealing, graph neural networks,
+trust, rover swarms, fog computing, graph pruning, task allocation, Gazebo,
+ROS~2, real-time 3D simulation.
+\clearpage
+
+% ============================ ACKNOWLEDGEMENT ============================
+\phantomsection
+\addcontentsline{toc}{chapter}{Acknowledgement}
+\frontheading{ACKNOWLEDGEMENT}
+
+It is my pleasure to express with deep sense of gratitude to \guidename,
+\guidedesignation, School of Computer Science and Engineering, Vellore
+Institute of Technology, Chennai, for his constant guidance, continual
+encouragement, understanding; more than all, he taught me patience in my
+endeavor. My association with him is not confined to academics only, but it
+is a great opportunity on my part of work with an intellectual and expert in
+the field of \guidearea.
+
+It is with gratitude that I would like to extend my thanks to the visionary
+leader Dr. G. Viswanathan our Honorable Chancellor, Mr. Sankar Viswanathan,
+Dr. Sekar Viswanathan, Dr. G V Selvam Vice Presidents, Dr. Sandhya
+Pentareddy, Executive Director, Ms. Kadhambari S. Viswanathan, Assistant
+Vice-President, Dr. V. S. Kanchana Bhaaskaran Vice-Chancellor, Dr. T.
+Thyagarajan Pro-Vice Chancellor, VIT Chennai and Dr. P. K. Manoharan,
+Additional Registrar for providing an exceptional working environment and
+inspiring all of us during the tenure of the course.
+
+Special mention to Dr. Viswanathan V, Dean, Dr. Nithyanandam P, Associate
+Dean, Dr. Suganya G, Associate Dean, Dr. Sweetlin Hemalatha C, Associate
+Dean, School of Computer Science and Engineering, Vellore Institute of
+Technology, Chennai for spending their valuable time and efforts in sharing
+their knowledge and for helping us in every aspect.
+
+In jubilant state, I express ingeniously my whole-hearted thanks to Dr.
+Tulasi Prasad Sariki, Head of the Department, B.Tech. Computer Science and
+Engineering (Artificial Intelligence and Machine Learning) and the Project
+Coordinators for their valuable support and encouragement to take up and
+complete the thesis.
+
+My sincere thanks to all the faculties and staffs at Vellore Institute of
+Technology, Chennai who helped me acquire the requisite knowledge. I would
+like to thank my parents for their support. It is indeed a pleasure to thank
+my friends who encouraged me to take up and complete this task.
+
+\vspace{1.5cm}
+\noindent\textbf{Place:} Chennai\\
+\noindent\textbf{Date:} \hfill \textbf{\candidatename}
+\clearpage
+
+% ========================= CONTENTS AND LISTS ===========================
+\begin{singlespace}
+\phantomsection
+\addcontentsline{toc}{chapter}{Contents}
 \tableofcontents
-\newpage
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Figures}
+\listoffigures
+\clearpage
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Tables}
+\listoftables
+\clearpage
+\end{singlespace}
+
+\input{chapters/frontmatter_symbols}
+
+% ============================== CHAPTERS ================================
+\clearpage
+\pagenumbering{arabic}
+\setcounter{page}{1}
 
 \input{chapters/ch01_introduction}
 \input{chapters/ch02_background}
 \input{chapters/ch03_architecture}
 \input{chapters/ch04_qubo}
 \input{chapters/ch05_solvers}
-\input{chapters/ch06_trust_gnn}
-\input{chapters/ch07_simulation}
-\input{chapters/ch08_exact_baselines}
-\input{chapters/ch09_scaling}
-\input{chapters/ch10_testing}
-\input{chapters/ch11_results}
-\input{chapters/ch12_gazebo}
-\input{chapters/ch13_webengine}
-\input{chapters/ch14_conclusion}
+\input{chapters/ch06_exact}
+\input{chapters/ch07_trust_gnn}
+\input{chapters/ch08_simulation}
+\input{chapters/ch09_verification}
+\input{chapters/ch10_results}
+\input{chapters/ch11_gazebo}
+\input{chapters/ch12_engine}
+\input{chapters/ch13_conclusion}
 
-\section*{References}
-\addcontentsline{toc}{section}{References}
-\fillme{reference list for the final section; the authors will supply the
-references separately. Suggested entries to confirm: Sabater and Sierra
-(2005) on trust and reputation, the CBC user guide, the D-Wave sampler
-documentation, the OpenJij paper, Gazebo Harmonic and ROS 2 Jazzy
-documentation, and the three.js and React documentation.}
+% ============================== REFERENCES ==============================
+\input{chapters/references}
 
-\appendix
-\input{chapters/appA_pending}
+% ============================== APPENDICES ==============================
+\input{chapters/appendices}
 
 \end{document}

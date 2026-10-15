@@ -1,0 +1,76 @@
+\phantomsection
+\addcontentsline{toc}{chapter}{List of Symbols, Abbreviations and Nomenclature}
+\frontheading{LIST OF SYMBOLS, ABBREVIATIONS AND NOMENCLATURE}
+
+\begin{singlespace}
+\noindent\textbf{Abbreviations}
+\vspace{4pt}
+
+\begin{longtable}{@{}p{3.0cm}p{11.2cm}@{}}
+AUC & Area Under the receiver-operating-characteristic Curve \\
+BKS & Best-Known Solution \\
+CBC & COIN-OR Branch and Cut, an open-source mixed-integer solver \\
+CI & Confidence Interval \\
+CPU & Central Processing Unit \\
+DDS & Data Distribution Service, the transport beneath ROS~2 \\
+ESP-NOW & Low-power peer-to-peer wireless protocol for ESP32-class devices \\
+EWMA & Exponentially Weighted Moving Average \\
+GNN & Graph Neural Network \\
+GPU & Graphics Processing Unit \\
+HTTP & Hypertext Transfer Protocol \\
+IoT & Internet of Things \\
+MILP & Mixed-Integer Linear Program \\
+MQTT & Message Queuing Telemetry Transport \\
+MSAA & Multi-Sample Anti-Aliasing \\
+ODE & Open Dynamics Engine, the physics engine used by the Gazebo world \\
+PBR & Physically Based Rendering \\
+QUBO & Quadratic Unconstrained Binary Optimisation \\
+ROS~2 & Robot Operating System, version 2 \\
+SA & Simulated Annealing \\
+SDF & Simulation Description Format \\
+SMAA & Subpixel Morphological Anti-Aliasing \\
+SQA & Simulated Quantum Annealing \\
+UI & User Interface \\
+WebGL & Web Graphics Library, the browser's GPU interface \\
+\end{longtable}
+
+\vspace{6pt}
+\noindent\textbf{Symbols}
+\vspace{4pt}
+
+\begin{longtable}{@{}p{3.8cm}p{10.4cm}@{}}
+$G_t=(V,E_t)$ & Undirected communication graph of the fleet at cycle $t$ \\
+$n=|V|$ & Number of rovers (fleet size) \\
+$T_i,B_i,\ell_i,q_i$ & Trust, battery, load and capability of rover $i$ \\
+$T_e,L_e,B_e,P_e,A_e,C_e$ & Edge trust, link quality, battery, proximity, freshness and task criticality \\
+$\bar c_e,\ c_e$ & Raw processing cost of edge $e$ and its quantised integer value \\
+$U_e$ & Weighted utility of edge $e$ \\
+$H,\ O$ & Hard-critical edges (always kept) and optional edges $O=E_t\setminus H$ \\
+$R,\ r,\ m$ & Required (mission-critical) rovers, the root rover, and $m=|R|-1$ \\
+$D_i,\ K$ & Per-rover degree cap and global processing-cost budget \\
+$x_e$ & Binary decision: keep ($1$) or prune ($0$) edge $e$ \\
+$s_i,\ s_C,\ q_e$ & Integer slack variables for degree, budget and flow capacity \\
+$f_{uv}$ & Integer flow on the directed arc $(u,v)$ \\
+$\lambda,\ \eta$ & Sparsity penalty and topology-stability penalty \\
+$\rho_d,\rho_C,\rho_F,\rho_{FC}$ & Penalty weights for degree, budget, flow conservation and flow capacity \\
+$z,\ Q$ & Bit vector of all QUBO variables and the QUBO matrix \\
+$H(z)$ & QUBO energy $z^{\top}Qz+\mathrm{const}$ \\
+$H^{*}$ & Exact (or best-known) optimal energy of an instance \\
+$\Delta E,\ \tau_{\mathrm{SA}}$ & Energy change of a move and annealing temperature \\
+$a_{ij}$ & Message weight $T_{ij}L_{ij}$ between rovers $i$ and $j$ \\
+$h_i^{(k)}$ & Hidden state of rover $i$ after $k$ message-passing rounds \\
+$W_s,\ W_n,\ b$ & Self weight, neighbour weight and bias of a message-passing layer \\
+$w,\ \beta$ & Weights and bias of the logistic readout \\
+$\sigma(\cdot)$ & Logistic sigmoid \\
+$\alpha,\ \delta$ & EWMA retention factor and trust-aging rate \\
+$p_i$ & Delivery factor: weakest link quality on rover $i$'s widest path to the root \\
+$\beta_K$ & Budget factor: budget as a fraction of the full-graph cost \\
+$(x,z,\psi)$ & Planar pose of a rover in the 3D engine: position and heading \\
+$v,\ \omega$ & Forward speed and yaw rate of a differential-drive rover \\
+$v_L,\ v_R$ & Left and right wheel rim speeds \\
+$L_w,\ r_w$ & Wheel track (separation) and wheel radius \\
+$R_b$ & Radius of the circular collision footprint of a rover \\
+$\Delta t$ & Fixed simulation time step of the 3D engine \\
+\end{longtable}
+\end{singlespace}
+\clearpage

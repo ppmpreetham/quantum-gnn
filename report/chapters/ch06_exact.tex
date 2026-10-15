@@ -1,0 +1,162 @@
+\chapter{Exact Classical Baselines}
+\label{ch:exact}
+
+\section{Why an Exact Baseline}
+
+Every solver claim in Chapter~\ref{ch:solvers} needs a referee. Exhaustive
+enumeration is a perfect referee but only for a dozen or so optional edges,
+because the number of subsets doubles with each edge. The fairest question
+to ask of any QUBO pipeline is also a sharper one: why not solve the original
+constrained problem directly with the best classical tool available? This
+chapter builds two exact baselines that answer both needs, using the
+open-source branch-and-cut solver CBC~\cite{cbc}.
+
+\begin{enumerate}[label=\arabic*.]
+\item A \textbf{direct MILP} of the constrained pruning problem, which never
+forms the penalty encoding at all.
+\item An \textbf{exact linearised solve} of the Q matrix itself, which
+certifies the true minimum of exactly the object the samplers were given.
+\end{enumerate}
+
+\section{The Direct Mixed-Integer Program}
+
+The soft part of Eq.~\eqref{eq:qubo:energy} is linear in $x$: the utility
+term is linear, and the stability term is linear for binary variables because
+$(x_e-x_e^{t-1})^2=x_e(1-2x_e^{t-1})+x_e^{t-1}$. The constraints are linear
+too, so the whole problem is a mixed-integer linear program:
+\begin{align}
+\min_{x,f}\quad & \sum_{e\in O}\Bigl(-U_e+\lambda+\eta\,(1-2x_e^{t-1})\Bigr)x_e
+\label{eq:exact:obj}\\
+\text{s.t.}\quad & \sum_{e\in\delta_O(i)}x_e\le D_i-\deg_H(i) && \forall i\in V,\\
+& \sum_{e\in O}c_ex_e\le K-c_H, \\
+& \mathrm{in}_v-\mathrm{out}_v=b_v && \forall v\in V,\\
+& f_{uv}+f_{vu}\le m\,x_e && \forall e=(u,v)\in E_t,\\
+& x_e\in\{0,1\},\quad f_{uv}\ge0\ \text{(continuous)}. \notag
+\end{align}
+Only the edge decisions are integer. The flows are continuous, which keeps the
+branch-and-bound tree small, and the next proposition shows that nothing is
+lost by relaxing them.
+
+\begin{proposition}[Flow integrality]
+For any fixed binary $x$, the flow constraints define a network-flow
+polytope with integer supplies and integer capacities. If it is non-empty,
+it has an integral point.
+\end{proposition}
+
+\begin{proof}[Argument]
+With $x$ fixed, the constraints are those of a single-commodity flow on the
+selected edges with supplies $b_v\in\{-m,0,1\}$ and capacities $m\,x_e$. The
+constraint matrix of a network flow is totally unimodular, so every vertex
+of the polytope is integral~\cite{ahuja1993}. Hence a continuous feasible
+flow exists exactly when an integer one does, and the MILP optimum equals the
+optimum of the fully integer problem.
+\end{proof}
+
+Because this program never contains a penalty, it has no barriers: the
+solver reasons about feasibility directly, through linear-programming bounds
+and cuts.
+
+\section{The Exact Linearised Solve of the Q Matrix}
+
+The second baseline answers a different question: what is the true minimum
+of the very matrix $Q$ that the samplers sampled? A quadratic binary
+objective becomes linear through the standard product linearisation. For
+every non-zero off-diagonal pair $Q_{kl}$ with $k<l$ we introduce a variable
+$y_{kl}$ intended to equal $z_kz_l$, and enforce
+\begin{equation}
+y_{kl}\le z_k,\qquad y_{kl}\le z_l,\qquad y_{kl}\ge z_k+z_l-1,\qquad
+y_{kl}\ge0.
+\label{eq:exact:lin}
+\end{equation}
+For binary $z_k,z_l$ these inequalities force $y_{kl}=z_kz_l$ exactly. The
+objective becomes
+\begin{equation}
+\sum_k Q_{kk}z_k+2\sum_{k<l}Q_{kl}\,y_{kl}+\mathrm{const},
+\end{equation}
+and CBC minimises it. The procedure accepts the answer only if CBC reports
+proven optimality; if the solver stops for any other reason, such as a time
+limit, the instance is skipped rather than scored. One auxiliary variable per
+non-zero pair makes the program grow quadratically, so this baseline is used
+for matrices with at most about 60 variables, where it serves as the ground
+truth of the sampler benchmark.
+
+\section{Cross-Validation of the Referees}
+
+A referee must itself be checked. Both baselines were compared against
+exhaustive enumeration on small instances, where all three must agree:
+
+\begin{itemize}
+\item the direct MILP optimum equals the best feasible edge set found by
+enumerating every subset of optional edges;
+\item the linearised Q-matrix optimum equals the same energy, confirming
+again, from a third direction, that the penalty encoding has no spurious
+infeasible minimum;
+\item on the five-rover worked example of Section~\ref{sec:qubo:worked}, the
+MILP returns exactly the four optimal edges with soft energy $-1.750$.
+\end{itemize}
+
+Once agreement was established on small instances, the direct MILP became
+the referee for larger ones, where enumeration is impossible.
+
+\section{Results}
+
+Table~\ref{tab:exact:summary} compares the projected annealer with the exact
+MILP on 20 instances with up to 40 optional edges, and
+Table~\ref{tab:exact:scaling} adds the MILP optimum to the scaling study where
+it could be computed.
+
+\begin{table}[htbp]
+\centering
+\caption{Projected annealing against the exact MILP on 20 instances.}
+\label{tab:exact:summary}
+\small
+\begin{tabular}{@{}l r r@{}}
+\toprule
+Measure & Projected annealer & MILP (CBC) \\
+\midrule
+Instances solved exactly & 95\% & 100\% (by definition) \\
+Mean normalised gap & $7\times10^{-5}$ & 0 \\
+Worst normalised gap & $1.4\times10^{-3}$ & 0 \\
+Wall-clock per instance & about 2.1~s & about 11 to 15~ms \\
+Optimality certificate & no & yes \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption[Soft energy (lower is better) on the scaling instances: projected annealing, a greedy top-$K$ baseline repaired to feasibility, and the exact MILP where available.]{Soft energy (lower is better) on the scaling instances: projected
+annealing, a greedy top-$K$ baseline repaired to feasibility, and the exact
+MILP where available. Connectivity is enforced for $n\le20$; at $n=10$ the
+repaired greedy edge set is infeasible.}
+\label{tab:exact:scaling}
+\small
+\begin{tabular}{@{}r r r r@{}}
+\toprule
+$n$ & Projected & Greedy (repaired) & MILP \\
+\midrule
+10 & $-6.39$ & infeasible & $-6.39$ \\
+20 & $-15.05$ & $-11.76$ & $-15.36$ \\
+30 & $-21.12$ & $-16.62$ & not run \\
+50 & $-36.71$ & $-24.30$ & not run \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two observations follow. First, the projected annealer is close to exact:
+identical at ten rovers, within about 2\% of the optimum at twenty, and far
+ahead of the repaired greedy baseline at every size, with a margin that grows
+with the fleet (3.3 energy units at 20 rovers, 12.4 at 50). Second, and
+uncomfortably for any QUBO-first story, the MILP is exact \emph{and} roughly
+100 times faster.
+
+\section{Positioning the QUBO}
+
+The honest conclusion is that on classical hardware the direct MILP
+dominates: it is exact, it certifies its answer, and it runs in milliseconds.
+What remains for the QUBO encoding is precisely its original purpose. It is
+the input format of quantum and quantum-inspired annealing hardware, and the
+projected annealer is a strong classical stand-in that solves the encoded
+problem near-exactly until such hardware is evaluated. The report states this
+plainly, and the interactive engine of Chapter~\ref{ch:engine} repeats it next
+to every comparison it shows, rather than overselling the formulation.

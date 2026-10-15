@@ -1,0 +1,189 @@
+\chapter{Trust-Aware GNN Inference and Task Assignment}
+\label{ch:gnn}
+
+\section{Role of the Inference Stage}
+
+Pruning decides which links the fleet will use; inference decides which rovers
+do the work. The stage runs on the fog device every cycle, so it must be cheap,
+and it combines what a rover is (trust, battery, free compute, capability) with
+where it sits in the kept graph (how reliable its neighbours are and how well
+its results can reach the root).
+
+\section{Node Features and Message Weights}
+
+Each rover $i$ starts from the feature vector
+\begin{equation}
+h_i^{(0)}=\bigl[T_i,\ B_i,\ 1-\ell_i,\ q_i\bigr]\in[0,1]^4,
+\end{equation}
+trust, battery, available compute and capability. Messages along a kept edge
+$(i,j)$ are weighted by
+\begin{equation}
+a_{ij}=T_{ij}\,L_{ij},
+\end{equation}
+the product of the edge trust (the smaller endpoint trust) and the measured
+link quality. A neighbour reached over a high-trust, high-quality link
+therefore contributes more to a rover's aggregate than one reached over a
+poor link, and pruned edges contribute nothing at all, which is where the
+pruner's decision enters the scores.
+
+\section{Two-Layer Message Passing}
+
+Each layer forms the trust-weighted mean of the neighbours' states and
+combines it with the rover's own state:
+\begin{equation}
+m_i=\frac{\sum_{j}a_{ij}\,h_j}{\sum_j a_{ij}},\qquad
+h_i'=\mathrm{ReLU}\bigl(W_sh_i+W_nm_i+b\bigr),
+\label{eq:gnn:layer}
+\end{equation}
+with $m_i=0$ for a rover without kept neighbours. After two layers a
+logistic readout produces the raw score
+\begin{equation}
+s_i=\sigma\bigl(w^{\top}h_i^{(2)}+\beta\bigr).
+\label{eq:gnn:readout}
+\end{equation}
+The default weights are deliberately simple: $W_s=0.8\,I_4$,
+$W_n=0.2\,I_4$, $b=0$, two layers, and a readout $w=(0.60,0.15,0.10,0.15)$
+over trust, battery, compute and capability with $\beta=0$, dominated by
+trust.
+
+
+
+The self weight dominates for a reason found empirically: with equal
+weighting, neighbour information washed out the per-rover differences that
+assignment depends on, and every rover in a cluster scored alike.
+
+\section{Gates, Criticality and Delivery Awareness}
+
+A raw score is not yet a decision. Three adjustments turn it into one.
+
+\subsubsection{Resource gates} A rover is ineligible for a task, with score
+zero, if its trust is below the task's minimum (0.25 in the simulator), its
+battery is below 15\% or its free compute is below the task's need (0.3).
+Gates are hard because these failures are not matters of degree: a rover
+with an empty battery cannot execute, however good its neighbourhood.
+
+\subsubsection{Criticality} For mission-critical tasks (criticality above
+0.5) the score is multiplied by $(0.5+0.5\,T_i)$. The scaling acts on the
+probability rather than on the logit, so its direction does not depend on the
+sign of the logit, and low-trust rovers are penalised more strongly exactly
+when failure is most costly.
+
+\subsubsection{Delivery awareness} The final score is multiplied by
+$(0.5+0.5\,p_i)$, where $p_i$ is the delivery factor of
+Chapter~\ref{ch:arch}: the weakest link on the widest path from $i$ to the
+root in the kept graph. A rover that cannot reach the root at all ($p_i=0$)
+is ineligible, because its result could never be delivered. The multiplier is
+only partial so that the root, whose delivery factor is always one, does not
+absorb every task merely by being the root.
+
+\subsubsection{Deadlock fallback} If the trust gate would leave a task
+without any eligible rover, for example early in a mission when every
+estimate is still near the prior, the trust gate is relaxed for that task
+while the resource gates are kept. The mission therefore never stalls on its
+own caution.
+
+\section{Capacity-Aware Greedy Assignment}
+
+Given scores for every rover and task, the assignment is greedy and
+conflict-free. All positive (score, task, rover) triples are sorted by
+decreasing score, ties broken by task name for determinism, and each triple is
+accepted if the task is still unassigned and the rover still has capacity
+(one task per rover per cycle by default). Greedy matching is not optimal in
+general, but with one task per rover and a handful of tasks per cycle it is
+close, and it costs microseconds.
+
+Each assignment raises the rover's load, which decays over the following
+cycles; without this feedback the most trusted rover received every task until
+its compute was exhausted.
+
+\subsubsection{Exploration} With probability $\varepsilon=0.15$ per task,
+the assigned rover is replaced by a random eligible one. Exploration keeps
+trust estimates honest, because a rover that is never chosen is never
+observed, and the explored assignments are tagged: they form the
+random-policy, selection-bias-free subset used to train the readout in
+Section~\ref{sec:gnn:readout}.
+
+\section{The Online Trust Model}
+
+Trust is learned from outcomes. After each cycle, every assigned rover is
+updated with an exponentially weighted moving average,
+\begin{equation}
+T_i\leftarrow\alpha\,T_i+(1-\alpha)\,\mathrm{obs}_i,
+\label{eq:gnn:ewma}
+\end{equation}
+where $\mathrm{obs}_i$ is 1 if the rover executed its task and 0 otherwise
+(an optional link-evidence term can be mixed in with weights 0.7 and 0.3).
+Rovers that were not observed age slowly towards the neutral prior,
+\begin{equation}
+T_i\leftarrow T_i+\delta\,(0.5-T_i),
+\label{eq:gnn:aging}
+\end{equation}
+with $\alpha=0.5$ and $\delta=0.1$ in the simulator.
+
+\begin{example}[Rehabilitation after one failure]
+A rover at trust 0.5 fails once: Eq.~\eqref{eq:gnn:ewma} drops it to 0.25,
+which sits on the trust gate. If it is then idle, aging restores it as
+$0.5-0.25\times0.9^k$ after $k$ cycles, reaching 0.35 after five cycles and
+0.41 after ten. Without aging the rover would sit at 0.25 forever, never be
+chosen, and therefore never be observed again: a single unlucky failure would
+blacklist it permanently. This was observed before aging was added.
+\end{example}
+
+The target the trust model tracks is deliberately hard. In the simulator,
+hidden reliability is spatially correlated (nearby rovers share terrain and
+interference) and can drift over time, so trust must follow a moving,
+structured target rather than estimate a fixed coin bias. The spatial
+correlation is also what gives message passing something to exploit:
+neighbours' outcomes carry information about a rover that has not been
+observed recently.
+
+\section{Edge Lifecycle}
+
+Pruned links are not forgotten. The candidate graph is rebuilt from
+telemetry every cycle, so a pruned link can always return, and a small state
+machine tracks each link's recent history: a link is \emph{active} while kept,
+\emph{suspect} after one prune, in \emph{probation} after two and
+\emph{removed} after four consecutive prunes, and returns to \emph{active} as
+soon as it is kept again.
+
+
+
+Links in \emph{probation} receive a freshness floor of 0.4. Without it, a
+link that was pruned for a few cycles would also go unobserved, its freshness
+would decay, its utility would fall further, and it would sink to the bottom
+of the ranking for good. The floor gives such links a fair re-evaluation
+when conditions improve.
+
+\section{The Cloud-Trained Readout}
+\label{sec:gnn:readout}
+
+The readout $(w,\beta)$ of Eq.~\eqref{eq:gnn:readout} can be trained in the
+cloud by logistic regression on pairs of hidden states and observed
+outcomes, which would turn the hand-set scorer into a learned model while
+keeping fog-side inference unchanged. Training data is subject to selection
+bias, because outcomes are observed only for rovers the policy chose, so
+training uses only the exploration-tagged samples, which were assigned at
+random. With that unbiased but small dataset (78 samples), the trained
+readout did \emph{not} improve held-out mission success over the fixed
+weights (32.8\% against 36.7\%, a difference of $-3.9$ points with 95\% CI
+$[-11.7,+11.7]$ and $p=0.49$). This is reported as a null result rather than
+tuned until it looked better; a larger exploration budget is listed as future
+work.
+
+\section{Ablation Arms}
+
+To isolate what each part contributes, the scorer can be replaced while gates,
+delivery awareness and assignment stay identical: \emph{trust-only} (score
+equals trust, the bandit-style baseline~\cite{auer2002}), \emph{no-graph} (the
+same readout on raw features, without message passing) and \emph{random}.
+Chapter~\ref{ch:results} reports their paired comparison, and the 3D engine
+runs all three alongside a live mission.
+
+\section{Computational Cost}
+
+For $n$ rovers and $|E'|$ kept edges, one layer costs $O(n+|E'|)$ small
+vector operations, and the whole stage measures about 0.2~ms at ten rovers
+and about 1~ms at fifty on the evaluation machine. The constraint that
+motivated the architecture is therefore met with a large margin: inference is
+not the bottleneck of the pipeline, and Chapter~\ref{ch:results} shows that
+pruning is.

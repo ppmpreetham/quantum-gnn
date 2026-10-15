@@ -1,0 +1,168 @@
+\chapter{Verification and Testing}
+\label{ch:verify}
+
+\section{Philosophy: a Hostile Audit}
+
+A research pipeline is easy to make look good and hard to make trustworthy.
+The verification strategy of this project was therefore written as a
+\emph{hostile} audit: a suite of roughly five hundred automated checks whose
+job is to break every claim the report makes. Three rules governed it.
+
+\begin{enumerate}[label=\arabic*.]
+\item \textbf{Independent answer keys.} Wherever possible the expected value
+comes from code or mathematics that shares nothing with the code under test:
+a term-by-term re-derivation of the energy, a pencil-and-paper optimum, an
+exact solver or exhaustive enumeration.
+\item \textbf{Floors, not snapshots.} Quality checks assert minimum
+performance (for example ``at least 90\% exact'') rather than exact numbers,
+so a regression trips the suite while harmless numerical noise does not.
+\item \textbf{Negative results stay visible.} Checks that document a
+weakness, such as the sampler failure rate, are kept and reported, not
+deleted when they become inconvenient.
+\end{enumerate}
+
+\section{The Shared Toolbox}
+
+Five helpers recur throughout: a generator of random connected instances with
+optional \emph{tight} caps placed near feasibility; an \emph{independent
+energy} that evaluates every term of Eq.~\eqref{eq:qubo:energy} directly,
+without the matrix; brute force over all bit strings for tiny instances;
+exact enumeration over optional-edge subsets with closed-form slacks and a
+direct connectivity check, the ground truth for small instances; and the
+normalised gap of Eq.~\eqref{eq:sol:gap}.
+
+\section{The Fourteen Sections of the Suite}
+
+Table~\ref{tab:verify:sections} summarises the suite. Each section asks one
+question, and together they cover the encoding, the solvers, the exact
+baselines, the GNN, the simulator and the regressions.
+
+\begin{longtable}{@{}p{0.6cm}p{3.6cm}p{9.6cm}@{}}
+\caption{Sections of the verification suite.}\label{tab:verify:sections}\\
+\toprule
+& Section & What is checked \\
+\midrule
+\endfirsthead
+\toprule
+& Section & What is checked \\
+\midrule
+\endhead
+A & Construction invariants & symmetric, finite $Q$; unique variable names; matrix energy equals the independent energy on random states \\
+B & Brute force vs SA & two answer keys agree to $10^{-9}$; brute-force optimum is feasible; bit-level SA within a gap floor; repair never fails \\
+C & Analytic optima & with constraints removed, the optimum equals a closed-form sum of per-edge decisions, with and without stability \\
+D & Scenario matrix & 80 larger random worlds: raw SA may be infeasible, but after repair zero instances remain infeasible \\
+E & Validation and edge cases & twelve kinds of bad input raise clear errors; empty problems, zero budget and default degree caps behave as designed; same seed gives identical output \\
+F & Scaling sanity & feasibility and a time limit at 8, 12 and 16 rovers; matrix memory reported \\
+G & Domain scenarios & seven hand-built stories with an unambiguous right answer \\
+H & Solver audit & four samplers on the actual $Q$ against a doubly verified ground truth; projected annealer must exceed a 90\% floor \\
+I & Trust-GNN layer & permutation equivariance, score ordering, hard gates, neighbourhood effect, assignment validity, trust dynamics, end-to-end gain over random, readout training \\
+J & Optimality gap & 100\% exact on small instances; certified bounds and best-known gaps on large ones \\
+K & Simulation harness & every pruner and fault runs; freshness decays under total packet loss; rank correlation and edge lifecycle behave correctly \\
+L & Regressions & minimal reproductions of every bug found during review stay fixed \\
+M & MILP ground truth & projected annealer against exact MILP optima; exact-rate floor of 80\% \\
+N & Sensitivity & exact rate under perturbed temperatures, cooling, restarts, penalties and move mix \\
+\bottomrule
+\end{longtable}
+
+\section{Selected Checks in Depth}
+
+\subsection{Analytic Optima}
+
+Section C provides the strongest checks in the suite, because their expected
+answers come from a formula rather than from any code. If degree caps, the
+budget, connectivity and stability are all removed, every edge becomes an
+independent choice: keeping it changes the energy by $-U_e+\lambda$, so the
+optimum is $\sum_e\min(0,-U_e+\lambda)$. With stability restored, each edge
+chooses between dropping, at cost $\eta(x_e^{t-1})^2$, and keeping, at cost
+$-U_e+\lambda+\eta(1-x_e^{t-1})^2$, so the optimum is the sum of the per-edge
+minima. Brute force over the full matrix must reproduce both sums to
+$10^{-9}$ on twenty random instances each. A failure here while section B
+passed would mean that the matrix encodes \emph{something} consistently, but
+not the intended something.
+
+\subsection{Domain Stories}
+
+Section G encodes seven situations whose correct ending any reader can verify:
+a required rover reachable only over a terrible \emph{bridge} link must keep
+it (dropping it costs a 500-point flow penalty); a weak redundant path must be
+pruned; of two identical links the one kept last cycle must stay
+(\emph{hysteresis}); a hub with cap 2 must drop its worst leaf; ten identical
+links must give a deterministic answer; a tight budget must prefer two cheap
+links over one expensive one; and a chain of terrible but necessary links must
+be kept whole. They are the tests a reviewer remembers.
+
+
+
+\subsection{The Solver Audit}
+
+Section H is built like a courtroom. Its 25 instances are small enough that
+an answer key exists, and the key is verified twice: on five instances the
+exact linearised solve must match enumeration to $10^{-7}$. Every sampler
+receives the actual matrix, the same warm start and the same scoring. One
+translation detail matters: external samplers expect the upper-triangular
+convention $\sum_iQ_{ii}x_i+\sum_{i<j}Q_{ij}x_ix_j$, while our matrix is stored
+in full symmetric form, so off-diagonal entries are doubled before hand-over.
+Getting this wrong would benchmark a distorted problem. The section then
+records the 48 to 64\% exact rates of Chapter~\ref{ch:solvers} and asserts
+only a floor for the production annealer, which is excluded from the
+scientific comparison.
+
+\subsection{Certified Bounds on Large Instances}
+
+Section J needs an answer without an answer key on its larger instances, and
+it obtains one from a bound. For each edge independently, the smaller of its
+keep cost and its drop cost is the best it could ever contribute; since
+penalties are non-negative, the sum of these per-edge minima is a certified
+lower bound $LB\le H^{*}$. Because $H^{*}\le H_{\mathrm{SA}}$, the quantity
+$(H_{\mathrm{SA}}-LB)/\max(1,|LB|)$ is an \emph{upper bound on the true gap}.
+If it is small, the solver is provably close to optimal without any exact
+solve. The section reports this bound alongside the best-known-solution gap.
+
+\subsection{Regressions}
+
+Every bug found during the external review rounds is pinned by a minimal
+reproduction. For example, a chain graph with connectivity constraints and no
+warm start once defeated the annealer, because greedy growth cannot cross the
+infeasible ``half a chain'' states; seeding from random spanning trees fixed it,
+and the case is now pinned.
+
+\section{Testing the Deployments}
+
+The two deployments carry their own tests, written in the same spirit.
+
+\subsubsection{3D engine motion tests} Seventeen property tests check the
+mathematics of Chapter~\ref{ch:engine}: angle wrapping and short-arc
+interpolation; agreement of the pose integrator with the closed-form circular
+arc and its exactness for straight lines; that a right turn drives the left
+wheel faster; that each wheel's contact point travels exactly its rim
+distance along an arc; that wheel-speed saturation preserves curvature; that
+spawn layouts never overlap and are deterministic; that over 1\,800 frames at
+triple speed and up to 16 rovers no two footprints ever overlap and no rover
+leaves the arena; that a dense swarm never deadlocks permanently; that
+corrupted frame times and planner data are rejected; and the widest-path,
+parameter-snapping, advisory and bootstrap utilities.
+
+\subsubsection{Planner service tests} Nineteen tests check the service that
+connects the 3D engine to the pipeline: parameter, position, fault and
+comparison validation; the shape and consistency of a planning step; the
+behaviour with no links in range, an impossible degree cap and a budget below
+the cheapest tree; live tuning without restarting a mission; session
+capacity and idle eviction; fault delivery to every paired arm; identical
+topology for the paired baselines; the solver comparison on the same matrix;
+and the HTTP round trip, including rejection of malformed requests.
+
+\subsubsection{Equivalence of instrumentation} The planner service needed a
+few read-only hooks in the simulator. Their addition was verified by running
+the simulator with and without them on five scenarios, including the repair
+pruners and the budget-fraction mode, and checking that every cycle's
+results are identical.
+
+\section{Reproducibility Practices}
+
+Every reported number can be regenerated provided the seeds, instance
+generators and package versions are recorded with each run, and the
+experiment drivers write their results incrementally so that long sweeps can
+be resumed. Comparisons between pruners and between assignment policies are
+always made on identical scenarios. Finally, the suite is run in full before
+any change is accepted, and optional solver backends that are not installed
+cause their checks to be skipped, never silently passed.

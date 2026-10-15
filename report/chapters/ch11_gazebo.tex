@@ -1,0 +1,212 @@
+\chapter{Physics Simulation in Gazebo with ROS 2}
+\label{ch:gazebo}
+
+\section{Motivation and Software Stack}
+
+The statistical simulator is fast, seeded and exactly reproducible, but it is
+not a physics engine and it does not exercise the questions every deployment
+must answer: how the pipeline receives live state from a robot simulator, how
+it is packaged so that anyone can reproduce it with one command, and how its
+decisions can be observed while a world runs. To answer them the pipeline was
+implemented in Gazebo: four differential-drive rovers are simulated by Gazebo
+Harmonic, their odometry is bridged into ROS~2 Jazzy, and the full pipeline
+runs inside a ROS~2 node against that live stream, publishing its decisions
+once per second. The chapter reports an integration, not a new experimental
+result.
+
+The integration has four layers (Fig.~\ref{fig:gz:stack}). Gazebo Harmonic
+simulates rigid-body physics with the ODE engine, the rover models and their
+differential-drive controllers, all described in SDF~1.9. A Gazebo--ROS bridge
+forwards the four odometry topics into ROS~2 \emph{Odometry} messages, in the
+Gazebo-to-ROS direction only. ROS~2 carries them to the planner node, a thin
+adapter around the unchanged pipeline: the pipeline is not rewritten as ROS
+packages, because it is middleware-agnostic by design.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  box/.style={draw, rounded corners, align=center, font=\small, minimum height=1.0cm, fill=white},
+  arr/.style={-{Stealth[length=2.4mm]}, thick},
+  lab/.style={font=\scriptsize, align=center},
+]
+\node[draw, dashed, rounded corners, minimum width=14.2cm, minimum height=4.6cm] at (6.6,-0.1) {};
+\node[font=\small\bfseries, anchor=north west] at (-0.4,2.1) {Docker container (ROS~2 Jazzy base image)};
+\node[box, minimum width=3.3cm, fill=orange!8] (gz) at (1.2,0.3) {Gazebo Harmonic\\server (headless)\\world + 4 rovers};
+\node[box, minimum width=3.0cm, fill=blue!6] (br) at (6.0,0.3) {Gazebo--ROS\\parameter bridge};
+\node[box, minimum width=3.4cm, fill=green!7] (pl) at (11.0,0.3) {planner node\\QUBO + GNN +\\trust model};
+\draw[arr] (gz) -- node[above, lab] {odometry\\(Gazebo transport)} (br);
+\draw[arr] (br) -- node[above, lab] {Odometry\\(ROS~2, 4 topics)} (pl);
+\node[box, minimum width=3.4cm] (st) at (11.0,-1.6) {status and assignment\\topics (JSON)};
+\draw[arr] (pl) -- (st);
+\end{tikzpicture}
+\caption{The Gazebo integration inside one container.}
+\label{fig:gz:stack}
+\end{figure}
+
+\section{The World and the Rover}
+
+The world is deliberately simple, so that every effect can be attributed
+(Table~\ref{tab:gz:world}). Four instances of one rover model stand on a line,
+the same line-up as the planned physical testbed. Each rover is a $0.9\times
+0.65\times0.25$~m, 3~kg body with two wheels of radius $r_w=0.16$~m on
+revolute joints, a track of $L_w=0.76$~m, and a differential-drive plugin that
+turns velocity commands into wheel motion and publishes odometry at 20~Hz. The
+3D engine of Chapter~\ref{ch:engine} uses the same dimensions, so the two
+simulators share one rover.
+
+\begin{table}[htbp]
+\centering
+\caption{The Gazebo world and the rover model.}
+\label{tab:gz:world}
+\small
+\begin{tabularx}{\linewidth}{@{}l X@{}}
+\toprule
+Element & Setting \\
+\midrule
+Physics & ODE, step 1~ms, real-time factor 1.0, update rate 1000~Hz \\
+Scene and ground & directional sun with shadows; static $30\times30$~m plane \\
+Spawn poses $(x,y,\psi)$ & R0 $(-3.0,0.0,0.00)$, R1 $(-1.0,0.4,0.25)$, R2 $(1.0,0.1,-0.20)$, R3 $(3.0,0.5,0.10)$ \\
+Body & box $0.9\times0.65\times0.25$~m, 3.0~kg, inertia $(0.2,0.2,0.3)$~kg\,m$^2$ \\
+Wheels and joints & radius 0.16~m, width 0.08~m, 0.25~kg; revolute, unlimited \\
+Drive plugin & differential drive, separation 0.76~m, odometry at 20~Hz \\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+A differential-drive rover is commanded by a forward speed $v$ and yaw rate
+$\omega$; the plugin converts them into wheel rim speeds and back again for
+odometry,
+\begin{equation}
+v_L=v-\frac{\omega L_w}{2},\quad v_R=v+\frac{\omega L_w}{2};\qquad
+v=\frac{v_L+v_R}{2},\quad \omega=\frac{v_R-v_L}{L_w},
+\label{eq:gz:diffdrive}
+\end{equation}
+in Gazebo's convention of counter-clockwise positive yaw with the left wheel at
+positive $y$; each wheel turns at $v_{L,R}/r_w$. Chapter~\ref{ch:engine} uses
+the same relations in its own mirrored convention and integrates them exactly.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[scale=0.92]
+\draw[gray!25, step=1] (-4.6,-1.6) grid (4.6,2.2);
+\draw[-{Stealth}] (-4.6,0) -- (4.8,0) node[right, font=\scriptsize] {$x$ (m)};
+\draw[-{Stealth}] (0,-1.6) -- (0,2.4) node[above, font=\scriptsize] {$y$ (m)};
+\coordinate (r0) at (-3,0); \coordinate (r1) at (-1,0.4); \coordinate (r2) at (1,0.1); \coordinate (r3) at (3,0.5);
+\foreach \a/\b in {r0/r1,r0/r2,r1/r2,r1/r3,r2/r3}{\draw[very thick, blue!60!black] (\a) -- (\b);}
+\draw[dashed, red!60!black] (r0) to[bend right=25] node[below, font=\scriptsize] {6.0 m, out of range} (r3);
+\foreach \p/\n in {r0/0,r1/1,r2/2,r3/3}{\node[circle, draw, thick, fill=white, inner sep=1.5pt, font=\scriptsize] at (\p) {R\n};}
+\end{tikzpicture}
+\caption{Top view of the Gazebo world: with a 5~m radio range the four rovers
+form five candidate links; the end rovers are 6~m apart and cannot link.}
+\label{fig:gz:world}
+\end{figure}
+
+\section{The Planner Node}
+
+The node subscribes to the four odometry topics, keeps each rover's latest
+planar position, and runs one pipeline cycle per one-second timer tick
+(Algorithm~\ref{alg:gz:cycle}). Every cycle it publishes two JSON messages: a
+status message (cycle, number of rovers with odometry, candidate and kept
+edges, pruner mode, solve time, assignment and every rover's trust) and an
+assignment message.
+
+\begin{algorithm}[htbp]
+\caption{One cycle of the Gazebo planner node}
+\label{alg:gz:cycle}
+\begin{algorithmic}[1]
+\Require latest odometry positions, trust model, previous kept edges
+\For{each pair of rovers within the 5~m radio range}
+  \State $P\gets1-d/d_{\max}$; link quality $0.85P+0.15$; cost $0.10+0.50(1-P)$
+\EndFor
+\State build the QUBO: all four rovers required, root 0, degree cap 3, budget 25 units
+\State solve by projected annealing, warm-started from the previous kept edges
+\If{no feasible solution} keep every candidate link and log a warning \EndIf
+\State score rovers for two tasks (criticality 0.7 and 0.4) on the kept graph
+\State multiply scores by $(0.5+0.5\,p_i)$ and assign greedily, one task per rover
+\State sample execution and delivery; update trust; age, decay loads, drain batteries
+\State publish the status and assignment messages
+\end{algorithmic}
+\end{algorithm}
+
+Four design choices are worth noting. Link quality is a \emph{deterministic}
+function of distance, because Gazebo models geometry rather than radio
+propagation; repeated runs are then comparable while Gazebo stays responsible
+for where the rovers are. A short annealing schedule (temperatures 0.5 to 0.05,
+cooling 0.8, two restarts) solves four rovers in about 13~ms, far inside the
+cycle. The node starts from the world's spawn poses, so it decides sensibly
+while the bridge is still starting, and its status reports how many rovers have
+delivered odometry, so a missing bridge is visible at once. If the physical
+graph ever becomes infeasible, the node keeps every link and marks the cycle,
+so the demonstration never stops silently.
+
+\section{Packaging and Launch}
+
+Everything runs in one Docker container built on the official ROS~2 Jazzy
+image, with the Gazebo simulator, the bridge, the message packages and NumPy
+added and the project copied in, so the pipeline is importable as ordinary
+Python. A compose file defines one service, with the number of cycles passed as
+an environment variable. The launch proceeds as in Fig.~\ref{fig:gz:launch}:
+before building, it refuses to continue with less than 8~GB of free disk,
+because a truncated build of the large base image fails far from the real
+cause; after starting the simulator headless, it waits three seconds and, if
+the server has died, prints its log and exits. An optional flag starts the
+graphical client when a display is available.
+
+\begin{figure}[htbp]
+\centering
+\begin{tikzpicture}[
+  stage/.style={draw, rounded corners, align=center, font=\small, minimum width=2.45cm, minimum height=1.2cm, fill=blue!4},
+  arr/.style={-{Stealth[length=2.3mm]}, thick},
+]
+\node[stage] (a) at (0,0) {1. check\\$\ge8$~GB disk};
+\node[stage] (b) at (2.95,0) {2. source ROS~2,\\model path};
+\node[stage] (c) at (5.9,0) {3. start\\bridge};
+\node[stage] (d) at (8.85,0) {4. start Gazebo\\headless};
+\node[stage] (e) at (11.8,0) {5. health check,\\run planner};
+\draw[arr] (a) -- (b); \draw[arr] (b) -- (c); \draw[arr] (c) -- (d); \draw[arr] (d) -- (e);
+\end{tikzpicture}
+\caption{Launch sequence of the container.}
+\label{fig:gz:launch}
+\end{figure}
+
+\section{Behaviour and Limitations}
+
+Table~\ref{tab:gz:run} shows the node's decisions on the spawn line-up,
+obtained by running its cycle code offline with those poses, which are what the
+live node receives while the rovers remain where they spawned.
+
+\begin{table}[htbp]
+\centering
+\caption[Planner cycles on the spawn line-up (all 5 candidate links kept in every cycle, solve 12 to 16~ms).]{Planner cycles on the spawn line-up (all 5 candidate links kept in
+every cycle, solve 12 to 16~ms). Trust is shown after each cycle.}
+\label{tab:gz:run}
+\small
+\begin{tabular}{@{}r c c r r r r@{}}
+\toprule
+Cycle & Critical task & Routine task & $T_0$ & $T_1$ & $T_2$ & $T_3$ \\
+\midrule
+0--2 & rover 3 & rover 0 & 0.73$\to$0.92 & 0.50 & 0.50 & 0.73$\to$0.92 \\
+3 & rover 3 (fails) & rover 0 & 0.95 & 0.50 & 0.50 & 0.50 \\
+4 & rover 1 & rover 0 & 0.97 & 0.73 & 0.50 & 0.50 \\
+5--11 & rover 1 & rover 0 & 0.99$\to$1.00 & 0.85$\to$1.00 & 0.50 & 0.50 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two observations are instructive. The pruner keeps all five links every cycle:
+on a short, healthy line-up every link's utility is far above the sparsity
+penalty and neither the caps nor the budget bind, so keeping everything is
+optimal; pruning starts to matter when weak or costly links appear, as in the
+larger fleets of Chapter~\ref{ch:results}. And trust visibly steers
+assignment: rover~3 wins the critical task while trusted, fails in cycle~3,
+drops from 0.92 to 0.50, and the task moves to rover~1 from the next cycle.
+
+The integration is honest about its limits. The node consumes odometry but
+publishes no velocity commands, so the rovers currently hold their spawn
+poses; adding a waypoint follower that uses the controller of
+Chapter~\ref{ch:engine} is the next step and would make the graph change from
+cycle to cycle. Link quality has no radio model, outcomes are sampled from
+assumed reliabilities, and the world is written for four rovers. Even so, the
+unchanged pipeline runs against live simulator state inside standard robot
+middleware, is reproducible with one command, and exposes every decision on an
+inspectable stream.
