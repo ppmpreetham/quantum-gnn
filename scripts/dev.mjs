@@ -1,10 +1,11 @@
-import { existsSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 
-// prefer the project venv (it can hold the optional dwave-neal / tabu / openjij solvers)
-const python = process.env.FLEET_PYTHON || (existsSync('.venv/bin/python') ? '.venv/bin/python' : 'python3')
+// Use 'uv' to execute the script in a managed environment
+const pythonCmd = 'uv'
+const pythonArgs = ['run', 'python', '-u', 'web/server.py']
+
 const children = [
-  spawn(python, ['-u', 'web/server.py'], { stdio: 'inherit' }),
+  spawn(pythonCmd, pythonArgs, { stdio: 'inherit', shell: true }),
   spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1'], { stdio: 'inherit' }),
 ]
 let stopping = false

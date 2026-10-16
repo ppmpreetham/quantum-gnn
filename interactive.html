@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DYNAMIC ROVER SWARM AUDIT</title>
+    <style>
+      * {
+        box-sizing: border-box;
+        border-radius: 0 !important; /* STRICTLY NO ROUNDED EDGES */
+        font-family: "Courier New", Courier, monospace;
+      }
+      body {
+        background-color: #ffffff;
+        color: #000000;
+        margin: 0;
+        padding: 20px;
+        display: flex;
+        justify-content: center;
+      }
+      .dashboard {
+        display: grid;
+        grid-template-columns: 1fr 400px;
+        grid-template-rows: auto auto 1fr;
+        gap: 0;
+        width: 100%;
+        max-width: 1300px;
+        border: 4px solid #000000;
+      }
+      .header {
+        grid-column: 1 / -1;
+        background: #000000;
+        color: #ffffff;
+        padding: 15px;
+        text-align: center;
+        font-size: 24px;
+        font-weight: bold;
+        letter-spacing: -1px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      .panel {
+        padding: 20px;
+        border: 2px solid #000000;
+        display: flex;
+        flex-direction: column;
+      }
+      .panel-title {
+        font-size: 16px;
+        font-weight: bold;
+        border-bottom: 4px solid #000000;
+        padding-bottom: 10px;
+        margin-bottom: 20px;
+        text-transform: uppercase;
+        display: flex;
+        justify-content: space-between;
+      }
+      .status-blink {
+        animation: blink 1s infinite;
+      }
+      @keyframes blink {
+        0%,
+        49% {
+          opacity: 1;
+        }
+        50%,
+        100% {
+          opacity: 0;
+        }
+      }
+
+      /* GRAPH VIEW */
+      #svgContainer {
+        width: 100%;
+        height: 450px;
+        border: 2px solid #000000;
+        background: #ffffff;
+        margin-bottom: 15px;
+        position: relative;
+        overflow: hidden;
+      }
+      svg {
+        width: 100%;
+        height: 100%;
+      }
+
+      .controls {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+        margin-bottom: 10px;
+      }
+      .controls-full {
+        display: flex;
+        gap: 10px;
+      }
+      button {
+        flex: 1;
+        background: #ffffff;
+        color: #000000;
+        border: 4px solid #000000;
+        padding: 12px;
+        font-weight: bold;
+        font-size: 14px;
+        cursor: pointer;
+        text-transform: uppercase;
+        text-align: center;
+      }
+      button:hover:not(:disabled) {
+        background: #000000;
+        color: #ffffff;
+      }
+      button:disabled {
+        border-color: #cccccc;
+        color: #cccccc;
+        cursor: not-allowed;
+      }
+
+      /* METRICS */
+      .data-row {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 5px;
+        font-size: 14px;
+        font-weight: bold;
+      }
+      .bar-wrap {
+        width: 100%;
+        height: 15px;
+        border: 2px solid #000000;
+        margin-bottom: 15px;
+        background: #ffffff;
+      }
+      .bar-fill {
+        height: 100%;
+        background: #000000;
+        width: 0%;
+        transition: width 0.2s ease;
+      }
+
+      /* TERMINAL */
+      .terminal {
+        grid-column: 1 / -1;
+        background: #000000;
+        color: #ffffff;
+        padding: 20px;
+        font-size: 14px;
+        height: 200px;
+        overflow-y: auto;
+        border-top: 4px solid #000000;
+      }
+      .term-line {
+        margin-bottom: 5px;
+      }
+      .term-prefix {
+        color: #888888;
+        margin-right: 10px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="dashboard">
+      <div class="header">
+        <span>LIVE SWARM OPTIMIZATION</span>
+        <span style="font-size: 16px">ROVERS: <span id="roverCountDisplay">5</span></span>
+      </div>
+
+      <!-- LEFT: NETWORK VISUALIZER -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>TOPOLOGY CANVAS</span>
+          <span id="topologyStatus">MOBILITY ACTIVE</span>
+        </div>
+
+        <div id="svgContainer">
+          <svg id="networkCanvas"></svg>
+        </div>
+
+        <div class="controls">
+          <button onclick="changeRovers(-1)">[-] REMOVE ROVER</button>
+          <button onclick="changeRovers(1)">[+] ADD ROVER</button>
+        </div>
+        <div class="controls-full">
+          <button id="btnHalt" onclick="toggleMobility()">1. FREEZE SWARM</button>
+          <button id="btnGNN" onclick="runGNN()" disabled>2. RUN GNN</button>
+          <button id="btnSolve" onclick="runSolver()" disabled>3. RUN QUBO</button>
+        </div>
+      </div>
+
+      <!-- RIGHT: METRICS -->
+      <div class="panel">
+        <div class="panel-title">
+          <span>PIPELINE METRICS</span>
+          <span class="status-blink">_</span>
+        </div>
+
+        <div
+          style="
+            font-weight: bold;
+            margin-bottom: 15px;
+            background: #000;
+            color: #fff;
+            padding: 5px;
+          "
+        >
+          [ SENSOR PROXIMITY ]
+        </div>
+        <div class="data-row">
+          <span>CANDIDATE EDGES DETECTED</span><span id="valEdges">0</span>
+        </div>
+        <div class="data-row"><span>AVG DISTANCE PENALTY</span><span id="valDist">0.00</span></div>
+
+        <div
+          style="
+            font-weight: bold;
+            margin-bottom: 15px;
+            margin-top: 20px;
+            background: #000;
+            color: #fff;
+            padding: 5px;
+          "
+        >
+          [ SOLVER STATE ]
+        </div>
+        <div class="data-row"><span>BUDGET CONSUMED</span><span id="valBudget">0 / 20</span></div>
+        <div class="bar-wrap"><div class="bar-fill" id="barBudget"></div></div>
+
+        <div class="data-row"><span>STRANDED ROVERS</span><span id="valConn">0</span></div>
+        <div class="bar-wrap">
+          <div class="bar-fill" id="barConn" style="background: #000"></div>
+        </div>
+
+        <div
+          class="data-row"
+          style="font-size: 20px; margin-top: 20px; border-top: 4px solid #000; padding-top: 10px"
+        >
+          <span>QUBO ENERGY:</span>
+          <span id="valEnergy">0.000</span>
+        </div>
+      </div>
+
+      <!-- BOTTOM: TERMINAL -->
+      <div class="terminal" id="terminalLog">
+        <div class="term-line">
+          <span class="term-prefix">SYSTEM></span> MOBILITY ENGINE ONLINE. AWAITING FREEZE COMMAND.
+        </div>
+      </div>
+    </div>
+
+    <script>
+      const svg = document.getElementById("networkCanvas");
+      const WIDTH = svg.parentElement.clientWidth;
+      const HEIGHT = svg.parentElement.clientHeight;
+
+      let numRovers = 5;
+      let nodes = [];
+      let candidateEdges = [];
+      let activeSubset = [];
+
+      let isMoving = true;
+      let pipelineState = "MOBILITY"; // MOBILITY -> FROZEN -> GNN -> SOLVED
+      let animationFrame;
+
+      function log(msg) {
+        const term = document.getElementById("terminalLog");
+        const time = new Date().toISOString().substring(11, 23);
+        term.innerHTML += `<div class="term-line"><span class="term-prefix">[${time}]</span> ${msg}</div>`;
+        term.scrollTop = term.scrollHeight;
+      }
+
+      // PHYSICS ENGINE
+      function initNodes() {
+        nodes = [];
+        // Base Station (Static Center)
+        nodes.push({ id: 0, x: WIDTH / 2, y: HEIGHT / 2, vx: 0, vy: 0, isBase: true });
+
+        // Rovers
+        for (let i = 1; i <= numRovers; i++) {
+          nodes.push({
+            id: i,
+            x: Math.random() * (WIDTH - 40) + 20,
+            y: Math.random() * (HEIGHT - 40) + 20,
+            vx: (Math.random() - 0.5) * 4,
+            vy: (Math.random() - 0.5) * 4,
+            isBase: false,
+          });
+        }
+      }
+
+      function changeRovers(delta) {
+        if (isMoving) {
+          numRovers = Math.max(2, Math.min(15, numRovers + delta));
+          document.getElementById("roverCountDisplay").innerText = numRovers;
+          initNodes();
+          log(`ROVER COUNT ADJUSTED TO: ${numRovers}`);
+        } else {
+          log(`ERROR: CANNOT CHANGE ROVER COUNT WHILE SWARM IS FROZEN.`);
+        }
+      }
+
+      function updatePhysics() {
+        if (isMoving) {
+          nodes.forEach((n) => {
+            if (!n.isBase) {
+              n.x += n.vx;
+              n.y += n.vy;
+              // Bounce
+              if (n.x < 20 || n.x > WIDTH - 20) n.vx *= -1;
+              if (n.y < 20 || n.y > HEIGHT - 20) n.vy *= -1;
+            }
+          });
+          extractCandidateEdges();
+        }
+        drawGraph();
+        animationFrame = requestAnimationFrame(updatePhysics);
+      }
+
+      function extractCandidateEdges() {
+        candidateEdges = [];
+        const MAX_DIST = 250;
+
+        for (let i = 0; i < nodes.length; i++) {
+          for (let j = i + 1; j < nodes.length; j++) {
+            let dx = nodes[i].x - nodes[j].x;
+            let dy = nodes[i].y - nodes[j].y;
+            let dist = Math.sqrt(dx * dx + dy * dy);
+
+            if (dist < MAX_DIST) {
+              // Cost formula simulated: closer = cheaper
+              let proximity = 1 - dist / MAX_DIST;
+              let rawCost = 0.1 + 0.5 * (1 - proximity) + Math.random() * 0.2;
+              let cost = Math.max(1, Math.round(rawCost * 10));
+              let util = (0.5 + proximity * 0.5).toFixed(3);
+
+              candidateEdges.push({
+                id: `${i}-${j}`,
+                s: i,
+                t: j,
+                dist: dist,
+                cost: cost,
+                util: parseFloat(util),
+              });
+            }
+          }
+        }
+        document.getElementById("valEdges").innerText = candidateEdges.length;
+      }
+
+      function drawGraph() {
+        svg.innerHTML = "";
+
+        candidateEdges.forEach((edge) => {
+          const n1 = nodes[edge.s];
+          const n2 = nodes[edge.t];
+          const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+          line.setAttribute("x1", n1.x);
+          line.setAttribute("y1", n1.y);
+          line.setAttribute("x2", n2.x);
+          line.setAttribute("y2", n2.y);
+
+          let isActive = activeSubset.includes(edge.id);
+
+          if (pipelineState === "SOLVED" && !isActive) {
+            // Dim rejected edges
+            line.setAttribute("stroke", "#EEEEEE");
+            line.setAttribute("stroke-width", "1");
+          } else if (isActive) {
+            line.setAttribute("stroke", "#000000");
+            line.setAttribute("stroke-width", "4");
+          } else {
+            line.setAttribute("stroke", "#AAAAAA");
+            line.setAttribute("stroke-width", "2");
+            line.setAttribute("stroke-dasharray", "4,4");
+          }
+          svg.appendChild(line);
+
+          // Draw Costs if Frozen
+          if (!isMoving && (isActive || pipelineState !== "SOLVED")) {
+            const textBg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            textBg.setAttribute("x", (n1.x + n2.x) / 2 - 12);
+            textBg.setAttribute("y", (n1.y + n2.y) / 2 - 10);
+            textBg.setAttribute("width", "24");
+            textBg.setAttribute("height", "18");
+            textBg.setAttribute("fill", "#FFFFFF");
+            textBg.setAttribute("stroke", "#000000");
+            svg.appendChild(textBg);
+
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", (n1.x + n2.x) / 2);
+            text.setAttribute("y", (n1.y + n2.y) / 2 + 3);
+            text.setAttribute("fill", "#000000");
+            text.setAttribute("font-size", "12px");
+            text.setAttribute("font-weight", "bold");
+            text.setAttribute("text-anchor", "middle");
+            text.textContent = edge.cost;
+            text.style.pointerEvents = "none";
+            svg.appendChild(text);
+          }
+        });
+
+        // Nodes
+        nodes.forEach((node) => {
+          const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+          rect.setAttribute("x", node.x - 16);
+          rect.setAttribute("y", node.y - 16);
+          rect.setAttribute("width", "32");
+          rect.setAttribute("height", "32");
+          rect.setAttribute("fill", node.isBase ? "#000000" : "#FFFFFF");
+          rect.setAttribute("stroke", "#000000");
+          rect.setAttribute("stroke-width", "3");
+          svg.appendChild(rect);
+
+          const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+          text.setAttribute("x", node.x);
+          text.setAttribute("y", node.y + 4);
+          text.setAttribute("fill", node.isBase ? "#FFFFFF" : "#000000");
+          text.setAttribute("font-size", "12px");
+          text.setAttribute("font-weight", "bold");
+          text.setAttribute("text-anchor", "middle");
+          text.textContent = node.id;
+          text.style.pointerEvents = "none";
+          svg.appendChild(text);
+        });
+      }
+
+      // PIPELINE CONTROLS
+      function toggleMobility() {
+        const btn = document.getElementById("btnHalt");
+        if (isMoving) {
+          isMoving = false;
+          pipelineState = "FROZEN";
+          btn.innerText = "1. UNFREEZE SWARM";
+          document.getElementById("topologyStatus").innerText = "SWARM FROZEN";
+          document.getElementById("btnGNN").disabled = false;
+          document.getElementById("btnSolve").disabled = true;
+          activeSubset = [];
+          log("SWARM HALTED. TOPOLOGY LOCKED FOR ANALYSIS.");
+        } else {
+          isMoving = true;
+          pipelineState = "MOBILITY";
+          btn.innerText = "1. FREEZE SWARM";
+          document.getElementById("topologyStatus").innerText = "MOBILITY ACTIVE";
+          document.getElementById("btnGNN").disabled = true;
+          document.getElementById("btnSolve").disabled = true;
+          activeSubset = [];
+
+          // Reset metrics
+          document.getElementById("valBudget").innerText = "0 / 20";
+          document.getElementById("barBudget").style.width = "0%";
+          document.getElementById("valDist").innerText = "0.00";
+          document.getElementById("valConn").innerText = "0";
+          document.getElementById("valEnergy").innerText = "0.000";
+          log("MOBILITY RESUMED. TOPOLOGY FLUID.");
+        }
+      }
+
+      function runGNN() {
+        document.getElementById("btnGNN").disabled = true;
+        log("EXTRACTING PROXIMITY FEATURES. CALCULATING LINK COSTS...");
+
+        let totalDist = 0;
+        candidateEdges.forEach((e) => (totalDist += e.dist));
+        let avgDist =
+          candidateEdges.length > 0 ? (totalDist / candidateEdges.length / 250).toFixed(2) : 0;
+
+        document.getElementById("valDist").innerText = avgDist;
+        log(`GNN COMPLETE. EVALUATED ${candidateEdges.length} CANDIDATE EDGES.`);
+        document.getElementById("btnSolve").disabled = false;
+      }
+
+      function runSolver() {
+        document.getElementById("btnSolve").disabled = true;
+        document.getElementById("btnHalt").disabled = true;
+        log("INITIATING QUBO ANNEALING SEQUENCE...");
+
+        pipelineState = "SOLVING";
+
+        let cycles = 0;
+        let annealInterval = setInterval(() => {
+          // Flash random valid-looking subsets
+          activeSubset = candidateEdges.filter(() => Math.random() > 0.6).map((e) => e.id);
+          document.getElementById("valBudget").innerText = Math.floor(Math.random() * 30) + " / 20";
+
+          cycles++;
+          if (cycles > 15) {
+            clearInterval(annealInterval);
+            finalizeOptimum();
+          }
+        }, 80);
+      }
+
+      function finalizeOptimum() {
+        pipelineState = "SOLVED";
+        log("COLLAPSING TO LOWEST ENERGY STATE (MST HEURISTIC)...");
+
+        // Greedy MST to ensure connectivity to base (Simulating the optimum)
+        activeSubset = [];
+        let connected = new Set([0]);
+        let totalCost = 0;
+        let totalUtil = 0;
+
+        // Sort edges by cost
+        let sortedEdges = [...candidateEdges].sort((a, b) => a.cost - b.cost);
+
+        while (connected.size < nodes.length && sortedEdges.length > 0) {
+          let added = false;
+          for (let i = 0; i < sortedEdges.length; i++) {
+            let e = sortedEdges[i];
+            let hasS = connected.has(e.s);
+            let hasT = connected.has(e.t);
+
+            if ((hasS && !hasT) || (!hasS && hasT)) {
+              activeSubset.push(e.id);
+              connected.add(e.s);
+              connected.add(e.t);
+              totalCost += e.cost;
+              totalUtil += e.util;
+              sortedEdges.splice(i, 1);
+              added = true;
+              break;
+            }
+          }
+          if (!added) break; // Graph disconnected physically
+        }
+
+        let stranded = nodes.length - connected.size;
+
+        document.getElementById("topologyStatus").innerText = "OPTIMUM DEPLOYED";
+        document.getElementById("valBudget").innerText = `${totalCost} / 20`;
+        document.getElementById("barBudget").style.width =
+          Math.min(100, (totalCost / 20) * 100) + "%";
+
+        document.getElementById("valConn").innerText = stranded;
+        document.getElementById("barConn").style.width = stranded > 0 ? "100%" : "0%";
+
+        // Calculate Energy
+        let budgetPenalty = totalCost > 20 ? (totalCost - 20) * 100 : 0;
+        let connPenalty = stranded * 500;
+        let rawScore = -totalUtil + activeSubset.length * 0.08; // sparsity
+        let finalEnergy = rawScore + budgetPenalty + connPenalty;
+
+        document.getElementById("valEnergy").innerText = finalEnergy.toFixed(3);
+
+        if (stranded > 0 || totalCost > 20) {
+          log(`WARNING: INFEASIBLE REGIME. PENALTIES APPLIED.`);
+        } else {
+          log(`SUCCESS: OPTIMAL SUBSET SECURED.`);
+        }
+
+        document.getElementById("btnHalt").disabled = false;
+      }
+
+      // Start
+      initNodes();
+      updatePhysics();
+    </script>
+  </body>
+</html>
