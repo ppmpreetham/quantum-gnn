@@ -92,12 +92,15 @@ the constraint-blind threshold pruner ($p=0.002$). Comparing only against
 constraint-blind pruners had overstated the cost of the guarantees by about two
 points, but the corrected gap remains significant. What the QUBO buys is the
 guarantee itself: it is the only arm with zero violations (the repaired
-baselines leave 1 to 3 degree and 0.3 to 0.9 connectivity violations per run),
+baselines leave 1.1 to 3.1 degree and 0.8 to 0.9 connectivity violations per
+run),
 and it has the best trust Spearman (0.295 against 0.251 to 0.271), though not
 the best AUC. The delivery metrics show its weakness (Fig.~\ref{fig:res:delivery}):
 a delivery-failure rate 4.4 points worse than threshold+repair (CI
-$[+1.4,+8.0]$) and 11.8 points worse than top-$K$, and the lowest recall of
-delivery-critical links, 0.67 against 0.82 to 0.93. The edge-local utility
+$[+1.4,+8.0]$) and 11.8 points worse than top-$K$, and a recall of
+delivery-critical links of 0.67, against 0.82 for the repaired baselines and
+0.93 for the threshold pruner; only the constraint-blind top-$K$, which keeps
+half of the links, is lower (0.56). The edge-local utility
 ranks links by their own quality rather than by how much delivery depends on
 them, so the optimum sometimes prunes exactly the redundancy that bottleneck
 paths need.
@@ -174,8 +177,8 @@ this sample cannot separate from noise.
 
 \begin{table}[htbp]
 \centering
-\caption{Assignment ablation, 10 rovers, 20 cycles, 8 seeds; differences are
-paired per seed.}
+\caption{Ablation of the assignment stage with 10 rovers, 20 cycles and 8
+seeds. Differences are computed per seed, in pairs.}
 \label{tab:res:ablation}
 \small
 \begin{tabular}{@{}l r l@{}}
@@ -196,13 +199,14 @@ trust-aware GNN (ours) & 39.8\% & \\
 A solve of more than a second cannot run synchronously on the fog device, so
 the cloud can solve every $k$ cycles while the fog device reuses the last
 decision, intersected with the live graph (Table~\ref{tab:res:staleness}).
-Reusing a two-cycle-old decision costs under one point of success while
-halving the solve load; at $k\ge4$ the measurement is dominated by seed
-variance, which is stated rather than smoothed into a curve.
+Using a decision that is two cycles old costs less than one point of success
+and cuts the number of solves in half. For $k\ge4$ the differences between
+seeds are larger than the effect we are trying to measure, so we report the
+numbers as they are instead of drawing a smooth curve through them.
 
 \begin{table}[htbp]
 \centering
-\caption{Cloud amortisation, 10 rovers, 20 cycles, 6 seeds.}
+\caption{Solving in the cloud every $k$ cycles, with 10 rovers, 20 cycles and 6 seeds.}
 \label{tab:res:staleness}
 \small
 \begin{tabular}{@{}r r r r@{}}
@@ -217,11 +221,11 @@ Solve interval $k$ & Success & Solves per cycle & Amortised solve (ms) \\
 \end{tabular}
 \end{table}
 
-Figure~\ref{fig:res:latency} contrasts the cost of pruning with the inference
-it protects. The solve dominates by about five orders of magnitude, so at
-small scale the architecture is justified by guarantees rather than by
-latency, and solving belongs in the cloud or on an amortised cadence, as the
-three-tier design anticipated.
+Figure~\ref{fig:res:latency} puts the time spent on pruning next to the time
+spent on inference. Solving takes about five orders of magnitude longer. At
+these small fleet sizes, then, the reason to prune is the guarantees it gives
+and not any saving in time. It also means the solve should run in the cloud or
+only every few cycles, which is what the three-tier design planned for.
 
 \begin{figure}[htbp]
 \centering
@@ -239,21 +243,23 @@ three-tier design anticipated.
 \addlegendentry{GNN inference}
 \end{axis}
 \end{tikzpicture}
-\caption{Per-decision wall-clock time on the scaling instances; the dip at
-$n=30$ reflects connectivity being disabled above 20 rovers.}
+\caption{Wall-clock time for each decision on the scaling instances. The
+time drops at $n=30$ because connectivity is no longer enforced above 20
+rovers.}
 \label{fig:res:latency}
 \end{figure}
 
 \section{Trust Quality, Training and Faults}
 
-Learned trust tracks hidden reliability with a Spearman correlation of 0.24 to
-0.30 and an AUC of 0.62 to 0.68. Cross-pruner trust comparisons are
-selection-confounded, because each pruner generates its own outcome stream,
-and this is flagged rather than hidden. The cloud-trained readout did not beat
-the fixed weights (Section~\ref{sec:gnn:readout}). Under the scripted fault,
-trust follows the degraded rover down, assignment moves away from it, and
-success returns to its pre-fault level within 3 to 4 cycles after the fault
-expires.
+The learned trust values follow the hidden reliability with a Spearman
+correlation between 0.24 and 0.30 and an AUC between 0.62 and 0.68. Comparing
+trust quality across pruners is not fair, because each pruner produces its own
+set of outcomes, and we point this out instead of leaving it unsaid. As
+reported in Section~\ref{sec:gnn:readout}, the readout trained in the cloud
+did not do better than the fixed weights. During the scripted fault, the trust
+of the degraded rover goes down, tasks are moved to other rovers, and success
+gets back to where it was before the fault 3 to 4 cycles after the fault
+ends.
 
 \section{Discussion and Limitations}
 

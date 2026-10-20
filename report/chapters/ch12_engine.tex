@@ -6,28 +6,32 @@
 The statistical simulator answers questions with tables and the Gazebo world
 answers integration questions, but neither lets a person \emph{watch} the
 pipeline think. The project therefore built its own interactive 3D simulation
-engine, which runs in a web browser (Fig.~\ref{fig:eng:overview}). Its
-requirements were that the real pipeline makes every decision; that rovers
-move with correct differential-drive kinematics, smoothly and without ever
-colliding; that links follow the rovers every frame and show what is kept,
-what is a candidate, what has stretched out of range and where data flows;
-that every parameter is tunable live; that the pipeline is compared honestly
-against baselines it beats; and that the scene stays fast at any fleet size,
-with orbit controls and a game-style map of every rover.
+engine, which runs in a web browser (Fig.~\ref{fig:eng:overview}). We set
+ourselves a list of requirements for it. Every decision had to come from the
+real pipeline. The rovers had to move with correct differential-drive
+kinematics, smoothly, and they could never collide. Links had to follow the
+rovers in every frame and show which links are kept, which are only
+candidates, which have stretched out of range, and where data is flowing. All
+parameters had to be adjustable while the simulation runs, and the pipeline
+had to be compared fairly with baselines that it beats. Finally, the scene had
+to stay fast for any fleet size and offer orbit controls along with a
+game-style map showing every rover.
 
 \begin{figure}[htbp]
 \centering
 \includegraphics[width=0.92\linewidth]{figures/engine-overview.png}
-\caption{The engine with the twelve-rover \emph{Dense swarm} preset: mission
-controls (left), the 3D scene with kept links and task beacons (centre), the
-overview map and per-rover radars (right), and the live comparison against
-trust-only assignment (bottom).}
+\caption{The engine running the twelve-rover \emph{Dense swarm} preset. The
+mission controls are on the left and the 3D scene, with kept links and task
+beacons, is in the centre. The overview map and the radar for each rover are
+on the right, and the live comparison with trust-only assignment is along the
+bottom.}
 \label{fig:eng:overview}
 \end{figure}
 
-Responsibilities are split along one narrow interface. The browser owns time,
-motion and rendering; a planner service, written in Python around the
-unchanged closed-loop simulator, owns every decision. Once per planning cycle
+The work is divided between two parts that talk through one small interface.
+The browser is in charge of time, motion and rendering. All decisions are made
+by a planner service, written in Python, which wraps the closed-loop simulator
+without changing it. Once per planning cycle
 the browser sends the rovers' live positions and the current parameters, and
 the service runs one pipeline cycle in which those positions replace the
 simulator's random walk, returning kept links, trust, assignments, task
@@ -69,20 +73,23 @@ assignment policy; because they run from the start, a baseline chosen
 mid-mission is still paired from the same initial state. For a solver
 comparison, the exact Q matrix that the primary's annealer just solved, with
 the same warm start, is handed to the chosen sampler. Faults are applied to
-every arm. The service validates every field against the configuration
-contract, answers ``busy'' rather than queueing, and evicts the longest-idle
-session when full; the browser keeps exactly one request in flight, so a slow
-solve stretches the cadence instead of piling up requests, and an answer for
-an old fleet can never be applied to a new one.
+every arm. The service checks each field against the configuration contract.
+When it is already working it replies ``busy'' instead of putting the request
+in a queue, and when all session slots are full it drops the session that has
+been idle longest. On its side, the browser never has more than one request
+waiting. A slow solve therefore makes the cycles longer instead of letting
+requests pile up, and a reply meant for an old fleet can never be applied to a
+new one.
 
-The presets of Table~\ref{tab:eng:presets} were chosen by measurement. During
-calibration a single annealer restart sent solvable instances to the
-keep-all fallback (the restart-floor defect of Section~\ref{sec:sol:ladder}),
-so every preset uses at least two.
+We picked the presets in Table~\ref{tab:eng:presets} by measuring them. While
+calibrating, we found that with only one annealer restart some solvable
+instances ended up in the keep-all fallback (this is the restart-floor defect
+described in Section~\ref{sec:sol:ladder}). Every preset therefore uses at
+least two restarts.
 
 \begin{table}[htbp]
 \centering
-\caption{Presets and their measured planner time per cycle.}
+\caption{The presets and the planner time per cycle we measured for each.}
 \label{tab:eng:presets}
 \small
 \begin{tabularx}{\linewidth}{@{}l r X r@{}}
@@ -102,8 +109,8 @@ Tight constraints & 10 & two links per rover, small budget & 140~ms \\
 
 \section{The Motion Engine}
 
-\subsubsection{Fixed step and interpolation} Motion is simulated at
-$\Delta t=1/120$~s, independent of the display rate. Each frame adds its real
+\subsubsection{Fixed step and interpolation} The motion is simulated in fixed
+steps of $\Delta t=1/120$~s, whatever the display's frame rate is. Each frame adds its real
 elapsed time (capped at 0.1~s, with a backlog cap of forty steps, so a stalled
 tab cannot trigger a burst of catch-up work) to an accumulator, advances by
 whole steps, and draws an interpolation between the last two steps with weight
@@ -147,20 +154,22 @@ repulsion from rovers within a sensing radius, weighted by
 $\bigl((S-d)/(S-2R_b)\bigr)^2$; a \emph{keep-right} term for rovers ahead, so
 two rovers meeting head-on veer the same way and pass; an inward push at the
 arena edge; and, for idle rovers, a pull towards the nearest neighbour when it
-drifts beyond 85\% of the radio range, which keeps the mesh connected. Speed
-scales with the squared cosine of the heading error, and near $\pm\pi$ the
-previous turn direction is held so the rover does not oscillate.
+drifts beyond 85\% of the radio range, which keeps the mesh connected. The
+speed is multiplied by the square of the cosine of the heading error. When the
+error is close to $\pm\pi$, the rover keeps turning in the direction it was
+already turning, so that it does not swing back and forth.
 
 \subsection{Collision Safety}
 
-Each footprint is enclosed in a circle of radius $R_b=0.62$~m, so collision
-freedom means every pair of centres stays at least $2R_b$ apart.
+We enclose each rover's footprint in a circle of radius $R_b=0.62$~m. Two
+rovers then never collide as long as their centres stay at least $2R_b$
+apart.
 
 \begin{proposition}[Sequential commits never overlap]
-Rovers are updated one at a time. Rover $i$'s proposed translation is accepted
-only if, for every other rover $j$ at its \emph{current} position, the new
-distance satisfies $d'_{ij}\ge2R_b$ or $d'_{ij}\ge d_{ij}$; otherwise $i$ only
-rotates in place. Then after every step
+The rovers are moved one after another. The translation proposed for rover
+$i$ is only accepted if, for each other rover $j$ at its \emph{current}
+position, the new distance meets $d'_{ij}\ge2R_b$ or $d'_{ij}\ge d_{ij}$. If
+not, rover $i$ just turns on the spot. Then after every step
 $d_{ij}^{\text{new}}\ge\min(2R_b,d_{ij}^{\text{old}})$ for every pair.
 \end{proposition}
 
@@ -171,8 +180,8 @@ $j$, moving later, against $i$'s new position, so
 d(p_i',p_j)\ge\min\bigl(2R_b,d(p_i,p_j)\bigr),\qquad
 d(p_i',p_j')\ge\min\bigl(2R_b,d(p_i',p_j)\bigr).
 \]
-Chaining the two gives the claim, and a rejected move leaves its inequality
-trivially true. A rotation in place does not move the centre of a circle, so
+Putting the two inequalities together proves the claim. If a move is
+rejected, its inequality holds trivially. A rotation in place does not move the centre of a circle, so
 it is always safe; the same argument keeps every rover inside the arena.
 \end{proof}
 

@@ -38,26 +38,27 @@ connectivity guarantee trivially satisfied.
 
 \section{The Radio Model}
 
-Two rovers can link when they are within the communication range. In each
-cycle a link is observed with probability $1-\pi$, where $\pi$ is the packet
-loss (5\% by default). An observed link refreshes its quality,
+Two rovers can link when they are within the communication range. The chance
+that a link is heard in a given cycle is $1-\pi$, where $\pi$ is the packet
+loss, set to 5\% unless stated otherwise. An observed link refreshes its quality,
 $L_e=\mathrm{clip}\bigl(1-d_{ij}/d_{\max}+\mathcal N(0,0.05^2)\bigr)$, and its
 timestamp; an unobserved link keeps its old quality and grows stale, with
 freshness $A_e=\exp(-\Delta t_e/3)$ in cycles. The edge cost follows
-Eq.~\eqref{eq:arch:cost}. Packet loss therefore does not delete links; it
-makes the pipeline's knowledge of them older and less reliable, which is the
-realistic failure mode.
+Eq.~\eqref{eq:arch:cost}. So packet loss does not remove links from the
+graph. What it does is make the pipeline's information about them older and
+less trustworthy, which is also what tends to go wrong with real radios.
 
 \section{Faults}
 
-Scripted faults stress the trust model and the pruner: a \emph{reliability
-drop} lowers one rover's (or every rover's) hidden reliability; an
-\emph{intermittent} fault toggles that drop every other cycle; a
-\emph{packet-loss spike} makes link knowledge stale fleet-wide; a
-\emph{battery drain} empties one rover until it cannot execute; and a
-\emph{position jump} displaces a rover abruptly. The default scenario degrades
-the most reliable rover for four cycles and adds a packet-loss spike one cycle
-later, the worst case for a system that has learned to rely on that rover.
+We test the trust model and the pruner with scripted faults. A
+\emph{reliability drop} lowers the hidden reliability of one rover, or of all
+of them. An \emph{intermittent} fault switches that drop on and off every
+other cycle. A \emph{packet-loss spike} makes the link information of the
+whole fleet go stale. A \emph{battery drain} empties one rover until it can no
+longer carry out tasks, and a \emph{position jump} suddenly moves a rover to a
+new place. In the default scenario the most reliable rover is degraded for
+four cycles, and a packet-loss spike starts one cycle after that. This is the
+hardest case for a system that has learned to depend on that rover.
 
 
 
@@ -87,10 +88,10 @@ with guarantees its opponents never tried to provide.
 
 \subsection{Budget and Degree Settings}
 
-The budget can be a fixed number of units $K$ or a fraction $\beta_K$ of the
-current cycle's full-graph cost, which keeps the pressure comparable across
-cycles whose graphs differ. The degree cap is three unless an experiment
-varies it. Section~\ref{sec:res:audit} explains why the second budget mode
+The budget is either a fixed number of units $K$ or a fraction $\beta_K$ of
+what the full graph costs in the current cycle. The second option keeps the
+pressure similar from one cycle to the next even when the graphs are
+different. Unless an experiment changes it, the degree cap is three. Section~\ref{sec:res:audit} explains why the second budget mode
 became necessary.
 
 \subsection{Cloud Amortisation}
@@ -176,20 +177,22 @@ Two further experiment drivers run outside the closed loop.
 
 \subsubsection{Scaling} Range-limited sparse graphs, in which each rover
 links to its nearest neighbours as real short-range radios would, are built
-for fleets of 10 to 50 rovers. For each size the driver reports edge and
-variable counts, matrix memory, build and solve time, the energy of the
-projected annealer against a repaired greedy baseline, and GNN latency on the
-full and the pruned graph. Connectivity is enforced only up to 20 rovers,
+for fleets of 10 to 50 rovers. At each size the driver records the numbers of
+edges and variables, the memory used by the matrix, the time to build and to
+solve, the energy reached by the projected annealer and by a repaired greedy
+baseline, and the GNN's latency on both the full and the pruned graph. Connectivity is enforced only up to 20 rovers,
 because the dense flow encoding grows quadratically, and the report never
 draws one curve across that transition.
 
-\subsubsection{Constraint pressure} The pressure sweep tightens one
-constraint at a time on identical scenarios: the budget fraction
-$\beta_K\in\{0.35,0.5,0.75,1.0\}$, the degree cap $D\in\{2,3,4\}$ and the
-roster size $|R|\in\{3,5,8\}$, each with six pruner arms, 16 seeds and 20
-cycles per run. Runs are logged incrementally so an interrupted sweep
-resumes where it stopped.
+\subsubsection{Constraint pressure} In the pressure sweep we keep the
+scenarios the same and tighten one constraint at a time. The budget fraction
+takes the values $\beta_K\in\{0.35,0.5,0.75,1.0\}$, the degree cap
+$D\in\{2,3,4\}$ and the roster size $|R|\in\{3,5,8\}$. Every setting is run
+with six pruner arms, 16 seeds and 20 cycles per run. Results are saved after
+each run, so a sweep that gets interrupted can carry on from where it
+stopped.
 
-All timings were measured on an AMD Ryzen 7 5800H (16 threads, 8~GB memory)
-with Python 3.14 and NumPy on its reference linear algebra library; the
-\emph{ratios} that drive the conclusions matter more than absolute times.
+We measured all timings on an AMD Ryzen 7 5800H (16 threads, 8~GB of memory)
+using Python 3.14 and NumPy with its reference linear algebra library. The
+conclusions rest on the \emph{ratios} between times more than on the absolute
+values.

@@ -3,42 +3,45 @@
 
 \section{Philosophy: a Hostile Audit}
 
-A research pipeline is easy to make look good and hard to make trustworthy.
-The verification strategy of this project was therefore written as a
-\emph{hostile} audit: a suite of roughly five hundred automated checks whose
-job is to break every claim the report makes. Three rules governed it.
+It is not hard to make a research pipeline look good, but it is much harder
+to make it trustworthy. We therefore set up verification as a \emph{hostile}
+audit, with about five hundred automated checks that each try to break one of
+the claims in this report. We followed three rules.
 
 \begin{enumerate}[label=\arabic*.]
-\item \textbf{Independent answer keys.} Wherever possible the expected value
-comes from code or mathematics that shares nothing with the code under test:
-a term-by-term re-derivation of the energy, a pencil-and-paper optimum, an
-exact solver or exhaustive enumeration.
-\item \textbf{Floors, not snapshots.} Quality checks assert minimum
-performance (for example ``at least 90\% exact'') rather than exact numbers,
-so a regression trips the suite while harmless numerical noise does not.
-\item \textbf{Negative results stay visible.} Checks that document a
-weakness, such as the sampler failure rate, are kept and reported, not
-deleted when they become inconvenient.
+\item \textbf{Independent answer keys.} Where we could, the expected value
+comes from code or mathematics that has nothing in common with the code being
+tested. Examples are a term-by-term re-derivation of the energy, an optimum
+worked out by hand, an exact solver, or enumeration of every case.
+\item \textbf{Floors, not snapshots.} Quality checks set a minimum level of
+performance, such as ``at least 90\% exact'', instead of expecting one exact
+number. A real regression then makes the suite fail, while small numerical
+noise does not.
+\item \textbf{Negative results stay visible.} When a check documents a
+weakness, for example how often the samplers fail, we keep it and report it.
+It is not removed just because the result is inconvenient.
 \end{enumerate}
 
 \section{The Shared Toolbox}
 
-Five helpers recur throughout: a generator of random connected instances with
-optional \emph{tight} caps placed near feasibility; an \emph{independent
-energy} that evaluates every term of Eq.~\eqref{eq:qubo:energy} directly,
-without the matrix; brute force over all bit strings for tiny instances;
-exact enumeration over optional-edge subsets with closed-form slacks and a
-direct connectivity check, the ground truth for small instances; and the
-normalised gap of Eq.~\eqref{eq:sol:gap}.
+Five helper functions are used across the suite. The first generates random
+connected instances and can optionally add \emph{tight} caps that sit close to
+the edge of feasibility. The second is an \emph{independent energy} that works
+out every term of Eq.~\eqref{eq:qubo:energy} directly, without using the
+matrix. The third is brute force over all bit strings, for very small
+instances. The fourth enumerates every subset of optional edges, computes the
+slacks in closed form and checks connectivity directly, and it provides the
+ground truth for small instances. The last is the normalised gap of
+Eq.~\eqref{eq:sol:gap}.
 
 \section{The Fourteen Sections of the Suite}
 
-Table~\ref{tab:verify:sections} summarises the suite. Each section asks one
-question, and together they cover the encoding, the solvers, the exact
-baselines, the GNN, the simulator and the regressions.
+The suite is summarised in Table~\ref{tab:verify:sections}. Each section tests
+one question. Taken together they cover the encoding, the solvers, the exact
+baselines, the GNN, the simulator and the regression cases.
 
 \begin{longtable}{@{}p{0.6cm}p{3.6cm}p{9.6cm}@{}}
-\caption{Sections of the verification suite.}\label{tab:verify:sections}\\
+\caption{The fourteen sections of the test suite.}\label{tab:verify:sections}\\
 \toprule
 & Section & What is checked \\
 \midrule
@@ -82,49 +85,52 @@ not the intended something.
 
 \subsection{Domain Stories}
 
-Section G encodes seven situations whose correct ending any reader can verify:
-a required rover reachable only over a terrible \emph{bridge} link must keep
-it (dropping it costs a 500-point flow penalty); a weak redundant path must be
-pruned; of two identical links the one kept last cycle must stay
-(\emph{hysteresis}); a hub with cap 2 must drop its worst leaf; ten identical
-links must give a deterministic answer; a tight budget must prefer two cheap
-links over one expensive one; and a chain of terrible but necessary links must
-be kept whole. They are the tests a reviewer remembers.
+Section G contains seven small situations where anyone can check what the
+right outcome should be. If a required rover can only be reached through a
+very poor \emph{bridge} link, that link has to stay, since dropping it costs a
+500-point flow penalty. A weak path that is redundant has to be pruned. Out of
+two identical links, the one kept in the previous cycle has to stay
+(\emph{hysteresis}). A hub with a cap of 2 has to drop its worst leaf. Ten
+identical links have to give the same answer every time. Under a tight budget,
+two cheap links should be chosen over one expensive link. Finally, a chain of
+very poor links that are all needed has to be kept in full. These cases are
+easy to explain, which makes them useful when someone reviews the work.
 
 
 
 \subsection{The Solver Audit}
 
-Section H is built like a courtroom. Its 25 instances are small enough that
-an answer key exists, and the key is verified twice: on five instances the
-exact linearised solve must match enumeration to $10^{-7}$. Every sampler
-receives the actual matrix, the same warm start and the same scoring. One
-translation detail matters: external samplers expect the upper-triangular
-convention $\sum_iQ_{ii}x_i+\sum_{i<j}Q_{ij}x_ix_j$, while our matrix is stored
-in full symmetric form, so off-diagonal entries are doubled before hand-over.
-Getting this wrong would benchmark a distorted problem. The section then
-records the 48 to 64\% exact rates of Chapter~\ref{ch:solvers} and asserts
-only a floor for the production annealer, which is excluded from the
-scientific comparison.
+Section H is set up so that every solver is judged by the same rules. Its 25
+instances are small enough to have a known answer, and that answer is itself
+checked: on five instances the exact linearised solve has to agree with
+enumeration to within $10^{-7}$. All samplers get the real matrix, the same
+warm start and the same scoring. One conversion step needs care. External
+samplers use the upper-triangular form
+$\sum_iQ_{ii}x_i+\sum_{i<j}Q_{ij}x_ix_j$, but our matrix is stored as a full
+symmetric matrix, so the off-diagonal entries are doubled before the matrix is
+passed on. If this were done wrongly, the samplers would be tested on a
+different problem. The section then records the 48 to 64\% exact rates from
+Chapter~\ref{ch:solvers}. For the production annealer, which is not part of
+the scientific comparison, it only checks a minimum level.
 
 \subsection{Certified Bounds on Large Instances}
 
-Section J needs an answer without an answer key on its larger instances, and
-it obtains one from a bound. For each edge independently, the smaller of its
-keep cost and its drop cost is the best it could ever contribute; since
+On its larger instances, Section J has no known answer to compare against,
+so it uses a bound instead. Taking each edge on its own, the lower of its keep
+cost and its drop cost is the best that edge could ever contribute. Since
 penalties are non-negative, the sum of these per-edge minima is a certified
 lower bound $LB\le H^{*}$. Because $H^{*}\le H_{\mathrm{SA}}$, the quantity
 $(H_{\mathrm{SA}}-LB)/\max(1,|LB|)$ is an \emph{upper bound on the true gap}.
 If it is small, the solver is provably close to optimal without any exact
-solve. The section reports this bound alongside the best-known-solution gap.
+solve. This bound is reported next to the gap to the best-known solution.
 
 \subsection{Regressions}
 
-Every bug found during the external review rounds is pinned by a minimal
-reproduction. For example, a chain graph with connectivity constraints and no
-warm start once defeated the annealer, because greedy growth cannot cross the
-infeasible ``half a chain'' states; seeding from random spanning trees fixed it,
-and the case is now pinned.
+For every bug found in the external review rounds there is now a small test
+that reproduces it. One example is a chain graph with connectivity constraints
+and no warm start, which the annealer used to fail on. Greedy growth could not
+get past the infeasible ``half a chain'' states. Starting from random spanning
+trees fixed the problem, and a test keeps it from coming back.
 
 \section{Testing the Deployments}
 

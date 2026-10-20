@@ -3,14 +3,17 @@
 
 \section{Design Goals}
 
-Four goals shaped the architecture before any algorithm was chosen. Decisions
-must respect global structure, because link caps, the budget and connectivity
-are properties of the whole kept graph. The fog tier must stay cheap: anything
-that runs every cycle on the Raspberry Pi must cost milliseconds. Learning must
-close the loop, feeding trust learned from outcomes into the next cycle without
-circular dependencies inside a cycle. And every claim must be checkable, with
-each stage testable against an independent reference and mission success
-depending causally on the decisions being evaluated.
+We fixed four goals for the architecture before choosing any algorithm. The
+first is that decisions have to respect the structure of the whole graph,
+since link caps, the budget and connectivity can only be judged on the full
+set of kept edges. The second is that the fog tier has to stay cheap, so
+everything that runs on the Raspberry Pi in every cycle should finish within a
+few milliseconds. The third is that learning has to feed back into the next
+cycle: trust learned from outcomes is used in the following cycle, and nothing
+inside one cycle depends on its own output. The last goal is that every claim
+should be checkable. Each stage can be tested against an independent
+reference, and mission success in the simulator depends causally on the
+decisions that are being evaluated.
 
 \section{Three-Tier Deployment}
 
@@ -113,11 +116,12 @@ pruning baseline, which keeps comparisons between pruners fair.
 \section{One Pipeline Cycle}
 
 Each control cycle executes the pipeline of Fig.~\ref{fig:arch:cycle}. The
-graph builder turns telemetry into $G_t$ with fresh features. The pruner
-selects the working subgraph subject to the constraints. The GNN scores every
-rover for every pending task on the pruned graph. The assignment stage
-matches tasks to rovers greedily under per-rover capacity. Finally the
-outcomes are observed and trust is updated.
+graph builder turns telemetry into $G_t$ with fresh features. Next, the pruner
+picks a working subgraph that meets the constraints, and the GNN uses that
+pruned graph to score each rover for each task that is waiting. The assignment
+stage then matches tasks to rovers greedily, without giving any rover more
+than it can handle. At the end of the cycle we see which tasks succeeded and
+update the trust values.
 
 \begin{figure}[htbp]
 \centering
@@ -139,33 +143,36 @@ outcomes are observed and trust is updated.
 \draw[arr] (trust.north) -- (qubo.south);
 \draw[arr] (trust.east) -- ++(0.3,0) |- (gnn.south);
 \end{tikzpicture}
-\caption[One pipeline cycle.]{One pipeline cycle. Trust from the previous cycle feeds both the
-pruner's edge features and the GNN's node features, closing the loop without
-a circular dependency inside a cycle.}
+\caption[One pipeline cycle.]{One pipeline cycle. The trust values from the previous cycle are
+used in the pruner's edge features and in the GNN's node features, so the loop
+is closed across cycles and no stage depends on its own output within a
+cycle.}
 \label{fig:arch:cycle}
 \end{figure}
 
 
 \section{The Mission Model}
 
-A pipeline that prunes the graph is only meaningful if pruning can change the
-outcome. The mission model therefore splits success into two causally linked
-events.
+Pruning the graph only makes sense if the choice of kept links can actually
+change how a mission turns out. For this reason the mission model treats a
+successful task as two linked events.
 
 \begin{definition}[Execution and delivery]
-An assigned rover $i$ \emph{executes} its task with probability equal to its
-hidden reliability, provided its battery is above 15\%. The result must then
-be \emph{delivered} to the root rover over the kept subgraph; delivery
-succeeds with probability equal to the delivery factor
+When rover $i$ is given a task, it \emph{executes} the task with a
+probability equal to its hidden reliability, as long as its battery is above
+15\%. After that, the result has to be \emph{delivered} to the root rover
+through the kept subgraph. Delivery succeeds with a probability given by the
+delivery factor
 \[
 p_i=\max_{\pi:\,i\to r}\ \min_{e\in\pi} L_e,
 \]
-the weakest link quality on the \emph{widest} path $\pi$ from $i$ to the root
-$r$ in the kept graph ($p_r=1$, and $p_i=0$ if no path exists). A task
-succeeds when both events occur.
+which is the quality of the weakest link on the \emph{widest} path $\pi$ from
+$i$ to the root $r$ in the kept graph. By definition $p_r=1$, and $p_i=0$ when
+no path exists. The task only counts as a success if both events happen.
 \end{definition}
 
-Execution outcomes drive the trust update, so trust estimates reliability.
+Trust is updated from execution outcomes only, which means it is an estimate
+of reliability.
 Delivery depends on the kept edges, so every pruning decision has a real,
 measurable effect on mission success. An earlier version of the simulator
 lacked this coupling: success depended on rover reliability alone and the
@@ -208,17 +215,143 @@ Planner service and 3D engine & Live sessions over HTTP and the interactive brow
 The intended physical testbed is four rovers on a flat surface, each an
 ESP32-class board on a small differential-drive chassis, with ESP-NOW links
 whose quality varies with distance (Fig.~\ref{fig:arch:testbed}). A degraded
-link, such as the one between the third and fourth rover in the figure, is
-exactly the kind of edge the pruner is meant to drop. The testbed has not yet
+link, such as the one between R3 and R4 in panel~(a), is exactly the kind of
+edge the pruner is meant to drop; panel~(c) shows one kept graph without it,
+in which all four rovers remain connected. The testbed has not yet
 been built; all quantitative results in this report come from simulation, and
 the Gazebo world of Chapter~\ref{ch:gazebo} reproduces the same four-rover
 line-up in a physics engine.
 
-\begin{figure}[htbp]
+\begin{figure}[p]
 \centering
-\includegraphics[width=0.72\linewidth]{figures/fig_testbed.pdf}
-\caption{Physical testbed concept: four rovers on a flat surface with
-ESP-NOW links and their communication ranges; the degraded link is a pruning
-candidate.}
+\begin{tikzpicture}[
+  font=\small,
+  ttl/.style={font=\bfseries\small, anchor=west},
+  rv/.style={circle, draw, thick, fill=orange!12, minimum size=0.62cm, inner sep=0pt, font=\scriptsize\bfseries},
+  q/.style={fill=white, inner sep=1pt, font=\scriptsize},
+  strong/.style={line width=1.6pt, black!80},
+  medium/.style={line width=0.9pt, black!60},
+  weak/.style={line width=0.9pt, red!70!black, dash pattern=on 3pt off 2pt},
+  pruned/.style={line width=0.6pt, black!35, dash pattern=on 1pt off 1.5pt},
+  box/.style={draw, rounded corners=2pt, align=center, font=\footnotesize, minimum width=2.9cm, minimum height=1.25cm},
+  flow/.style={-{Stealth[length=2.2mm]}, thick},
+  both/.style={{Stealth[length=2.2mm]}-{Stealth[length=2.2mm]}, thick},
+  lead/.style={draw=black!50, thin},
+  rovertop/.pic={
+    \fill[black!70, rounded corners=0.6pt] (-0.28,0.30) rectangle (0.12,0.44);
+    \fill[black!70, rounded corners=0.6pt] (-0.28,-0.44) rectangle (0.12,-0.30);
+    \draw[thick, fill=orange!12, rounded corners=2.5pt] (-0.50,-0.30) rectangle (0.50,0.30);
+    \fill[black!80] (0.50,0) -- (0.37,0.09) -- (0.37,-0.09) -- cycle;
+  },
+]
+% ---------------- (a) test surface, top view ----------------
+\node[ttl] at (0,21.0) {(a) Test surface and data path, top view};
+\fill[black!3] (0,12.2) rectangle (9.6,20.6);
+\draw[black!45] (0,12.2) rectangle (9.6,20.6);
+\node[font=\scriptsize, text=black!55, anchor=north west] at (0.1,20.5) {flat test surface};
+\coordinate (A1) at (1.6,16.4);
+\coordinate (A2) at (4.2,17.8);
+\coordinate (A3) at (7.4,18.2);
+\coordinate (A4) at (5.0,14.6);
+\begin{scope}
+  \clip (0,12.2) rectangle (9.6,20.6);
+  \fill[blue!5] (A3) circle (4.5);
+  \draw[blue!50!black, dashed] (A3) circle (4.5);
+\end{scope}
+\node[font=\scriptsize, text=blue!50!black, anchor=south east] at ($(A3)+(165:4.5)$) {radio range of R3};
+\draw[weak] (A3) -- (A4) node[q, midway, text=red!70!black] {0.28};
+\draw[medium] (A1) -- (A4) node[q, midway] {0.62};
+\draw[strong] (A1) -- (A2) node[q, midway] {0.91};
+\draw[strong] (A2) -- (A3) node[q, midway] {0.84};
+\draw[strong] (A2) -- (A4) node[q, midway] {0.80};
+\foreach \p/\a/\n in {A1/20/1, A2/-10/2, A3/35/3, A4/-25/4} {
+  \pic[rotate=\a] at (\p) {rovertop};
+  \node[font=\scriptsize\bfseries] at (\p) {R\n};
+}
+\node[font=\scriptsize, text=red!70!black, align=center, fill=white, draw=red!50, rounded corners=1pt, inner sep=2pt] (dg) at (8.2,14.5) {degraded link,\\pruning candidate};
+\draw[red!60!black, thin] (dg.north) -- ($(A3)!0.62!(A4)$);
+\begin{scope}[shift={(0.25,12.45)}]
+  \draw[fill=white, draw=black!30, rounded corners=1pt] (0,0) rectangle (3.35,1.75);
+  \draw[strong] (0.15,1.45) -- (0.75,1.45); \node[anchor=west, font=\scriptsize] at (0.85,1.45) {strong link};
+  \draw[medium] (0.15,1.05) -- (0.75,1.05); \node[anchor=west, font=\scriptsize] at (0.85,1.05) {weaker link};
+  \draw[weak] (0.15,0.65) -- (0.75,0.65); \node[anchor=west, font=\scriptsize] at (0.85,0.65) {degraded link};
+  \node[anchor=west, font=\scriptsize, text=black!60] at (0.1,0.25) {numbers: link quality};
+\end{scope}
+\node[box, fill=orange!8] (gw) at (12.85,19.3) {\textbf{gateway}\\ESP32-class board};
+\node[box, fill=green!6, minimum height=1.7cm] (pi) at (12.85,16.4) {\textbf{fog node}\\Raspberry Pi\\[2pt]{\scriptsize graph, pruning,}\\[-2pt]{\scriptsize trust GNN, assignment}};
+\node[box, fill=blue!5, minimum height=1.5cm] (cl) at (12.85,13.5) {\textbf{cloud}\\laptop or server\\[2pt]{\scriptsize readout training,}\\[-2pt]{\scriptsize heavy solves}};
+\draw[flow] (9.6,19.55) -- node[above, font=\scriptsize, align=center] {ESP-NOW\\[-2pt]telemetry} (gw.west |- 0,19.55);
+\draw[flow, dashed] (gw.west |- 0,19.05) -- node[below, font=\scriptsize] {tasks} (9.6,19.05);
+\draw[both] (gw) -- node[right, font=\scriptsize] {Wi-Fi} (pi);
+\draw[both] (pi) -- node[right, font=\scriptsize] {MQTT} (cl);
+% ---------------- (b) one rover, side view ----------------
+\node[ttl] at (0,11.65) {(b) Rover concept, side view, and the data it exchanges};
+\draw[thick] (0.2,6.7) -- (6.9,6.7);
+\foreach \x in {0.45,0.75,...,6.9} {\draw[black!40] (\x,6.7) -- (\x-0.2,6.5);}
+\draw[fill=black!25] (2.0,7.5) rectangle (3.2,7.92);
+\draw[thick, fill=black!70] (2.0,7.32) circle (0.62);
+\draw[fill=black!20] (2.0,7.32) circle (0.22);
+\draw[thick] (5.2,7.95) -- (5.25,7.14);
+\draw[thick, fill=black!60] (5.25,6.92) circle (0.22);
+\draw[thick, fill=orange!12, rounded corners=2pt] (1.0,7.95) rectangle (5.8,8.35);
+\draw[fill=blue!10] (1.3,8.35) rectangle (2.8,9.0);
+\node[font=\scriptsize] at (2.05,8.675) {battery};
+\draw[fill=black!8] (3.0,8.35) rectangle (4.15,9.0);
+\node[font=\scriptsize, align=center] at (3.575,8.675) {motor\\[-3pt]driver};
+\draw[fill=green!30!black!25] (4.35,8.35) rectangle (5.65,8.6);
+\draw[thick] (5.45,8.6) -- (5.45,9.7);
+\fill (5.45,9.7) circle (0.06);
+\foreach \r in {0.25,0.42,0.59} {\draw[blue!60!black, thin] (5.45,9.7) ++(-35:\r) arc (-35:35:\r);}
+\node[font=\scriptsize, align=center] (espl) at (3.2,10.45) {ESP32-class board\\[-2pt]with ESP-NOW radio};
+\draw[lead] (espl.south east) -- (4.8,8.6);
+\node[font=\scriptsize, align=center] at (2.0,6.05) {drive wheel and motor\\[-2pt](left and right)};
+\node[font=\scriptsize] at (5.25,6.2) {caster};
+\node[draw, rounded corners=2pt, fill=black!2, text width=6.25cm, align=left, anchor=north west, font=\footnotesize, inner sep=6pt] at (7.6,11.2) {%
+\textbf{Each cycle, rover to fog node}\\[2pt]
+\textbullet\ position and heading\\
+\textbullet\ battery level\\
+\textbullet\ compute load\\
+\textbullet\ link quality to each neighbour\\
+\hspace*{0.9em}(signal strength, packet loss)\\
+\textbullet\ outcome of the last assigned task\\[5pt]
+\textbf{Fog node to rover}\\[2pt]
+\textbullet\ task assignment};
+% ---------------- (c) candidate graph and kept graph ----------------
+\node[ttl] at (0,5.25) {(c) Pruning the candidate graph};
+\begin{scope}[yshift=3.5mm]
+\begin{scope}
+  \node[rv] (c1) at (0.9,2.46) {R1};
+  \node[rv] (c2) at (2.72,3.44) {R2};
+  \node[rv] (c3) at (4.96,3.72) {R3};
+  \node[rv] (c4) at (3.22,1.2) {R4};
+  \draw[weak] (c3) -- (c4) node[q, midway, text=red!70!black] {0.28};
+  \draw[medium] (c1) -- (c4) node[q, midway] {0.62};
+  \draw[strong] (c1) -- (c2) node[q, midway] {0.91};
+  \draw[strong] (c2) -- (c3) node[q, midway] {0.84};
+  \draw[strong] (c2) -- (c4) node[q, midway] {0.80};
+  \node[font=\footnotesize] at (2.95,0.3) {candidate graph: 5 links};
+\end{scope}
+\draw[flow] (5.75,2.45) -- node[above, font=\scriptsize, align=center] {constrained\\[-2pt]QUBO pruning} node[below, font=\scriptsize, align=center, text=black!65] {degree cap, budget,\\[-2pt]connectivity} (8.85,2.45);
+\begin{scope}
+  \node[rv] (k1) at (9.4,2.46) {R1};
+  \node[rv] (k2) at (11.22,3.44) {R2};
+  \node[rv] (k3) at (13.46,3.72) {R3};
+  \node[rv] (k4) at (11.72,1.2) {R4};
+  \draw[pruned] (k3) -- (k4) node[midway, text=red!70!black, font=\footnotesize\bfseries] {$\times$};
+  \draw[pruned] (k1) -- (k4) node[midway, text=red!70!black, font=\footnotesize\bfseries] {$\times$};
+  \draw[strong] (k1) -- (k2) node[q, midway] {0.91};
+  \draw[strong] (k2) -- (k3) node[q, midway] {0.84};
+  \draw[strong] (k2) -- (k4) node[q, midway] {0.80};
+  \node[font=\footnotesize] at (11.45,0.3) {kept graph: 3 links, all rovers connected};
+\end{scope}
+\end{scope}
+\end{tikzpicture}
+\caption[Physical testbed concept.]{Physical testbed concept. (a)~Four ESP32-class rovers
+on a flat surface; line width shows ESP-NOW link quality (illustrative values),
+and the link from R3 to R4, near the edge of R3's radio range, is degraded. An
+ESP32 gateway relays telemetry to the Raspberry Pi fog node and returns task
+assignments. (b)~One rover in side view and the data it exchanges each cycle.
+(c)~The candidate graph of (a) and one possible kept graph: the degraded link
+and a redundant link are pruned while all four rovers stay connected.}
 \label{fig:arch:testbed}
 \end{figure}

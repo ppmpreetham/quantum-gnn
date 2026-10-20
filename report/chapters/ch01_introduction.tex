@@ -20,18 +20,20 @@ moving graph and, equally important, an audit of how well each part works.
 The pipeline first \emph{prunes} the graph to a small, reliable working
 subgraph by solving a constrained optimisation problem written as a quadratic
 unconstrained binary optimisation (QUBO), the native input of quantum and
-quantum-inspired annealers. A lightweight graph neural network (GNN) then
-scores the rovers on the pruned graph using trust learned online from task
-outcomes, and a capacity-aware greedy stage assigns the tasks. The pipeline is
-exercised in three environments of increasing realism: a statistical
-simulator used for every quantitative claim, a Gazebo and ROS~2 physics
-simulation, and an interactive 3D simulation engine built for this project.
+quantum-inspired annealers. Once the graph has been pruned, a small graph
+neural network (GNN) gives every rover a score. The scores depend on trust
+values that the system learns online from how earlier tasks turned out, and a
+greedy step then hands out the tasks while respecting how much work each rover
+can take. We tested the pipeline in three settings, each more realistic than
+the last. All of the numbers in this report come from a statistical simulator;
+the other two settings are a physics simulation in Gazebo with ROS~2 and an
+interactive 3D simulation engine that we built for this project.
 
 \section{Overview of Dynamic Rover Networks}
 
-At every control cycle $t$ the fleet is modelled as an undirected graph
-$G_t=(V,E_t)$ whose vertices are rovers and whose edges are the pairs that can
-currently exchange packets. Each edge carries normalised features describing
+We treat the fleet at control cycle $t$ as an undirected graph
+$G_t=(V,E_t)$. Each vertex is a rover, and two rovers share an edge when they
+are able to exchange packets during that cycle. Each edge carries normalised features describing
 how much it is worth keeping (the trust and battery of its weaker endpoint, its
 link quality, proximity, freshness, the criticality of the tasks at its ends
 and its processing cost), and each rover carries its own trust, battery, load
@@ -84,19 +86,22 @@ mission rovers.}
 \section{Challenges}
 
 \begin{enumerate}[label=\arabic*.]
-\item \textbf{Volatile links.} Quality and availability change with mobility,
-interference and distance, so freshness must be part of the model.
-\item \textbf{Hidden, drifting reliability.} A rover's reliability is never
-observed directly; it must be inferred from the outcomes of tasks it was
-given, which depend on whom we chose to trust.
+\item \textbf{Volatile links.} A link can get better, get worse or vanish as
+rovers move, as interference changes and as distances grow. For this reason the
+model also has to track how recently each link was heard.
+\item \textbf{Hidden, drifting reliability.} Nobody can measure how reliable a
+rover is. We can only estimate it from the tasks it was given, and which tasks
+it was given depended on how much we trusted it in the first place.
 \item \textbf{Scarce fog compute.} Message passing costs grow with the number
 of edges, and the fog device has a small budget per cycle.
-\item \textbf{Global constraints.} Link caps, a processing budget and
-connectivity of mission rovers are properties of the whole kept graph; rules
-that judge one edge at a time cannot guarantee them.
-\item \textbf{Solver reliability.} A correctly encoded problem is useless if
-the solver returns infeasible or poor answers, which only becomes visible
-against exact ground truth.
+\item \textbf{Global constraints.} Whether the link caps, the processing
+budget and the connectivity of the mission rovers are respected depends on the
+kept graph as a whole. A rule that looks at one edge at a time has no way to
+guarantee any of them.
+\item \textbf{Solver reliability.} Even a correctly encoded problem does not
+help if the solver gives back infeasible or weak answers, and this kind of
+failure is only noticed when the answers are compared with an exact
+solution.
 \end{enumerate}
 
 \section{Project Statement}
@@ -118,8 +123,8 @@ flow-based connectivity, and verify it against an independent re-derivation
 and exhaustive enumeration.
 \item Explain why bit-level annealers fail on penalty-encoded QUBOs and build a
 solver that reliably returns feasible, near-optimal edge sets.
-\item Provide exact classical baselines against which every solver claim can be
-checked.
+\item Set up exact classical baselines so that each claim about a solver can
+be checked against them.
 \item Design a trust-weighted message-passing GNN with an online trust model,
 cheap enough for a fog device.
 \item Build a causal closed-loop simulator with a statistically sound

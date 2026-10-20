@@ -54,10 +54,9 @@ user says "make it better than other models", they mean make the
   cd paper && /tmp/tectonic main.tex
   ```
   Redownload tectonic 0.15.0 from GitHub releases if `/tmp/tectonic` is
-  gone. `paper/fig_testbed.pdf` is committed, so tectonic alone suffices.
-  Rebuilding the fiziko figure needs lualatex + luamplib + MetaPost and a
-  clone of https://github.com/jemmybutton/fiziko into `paper/fiziko/`
-  (gitignored).
+  gone. The paper no longer uses the fiziko testbed figure, so tectonic
+  alone suffices (`paper/build.sh` wraps it). The old
+  `paper/fig_testbed.{tex,pdf}` files are kept but unused.
 
 ---
 
@@ -73,7 +72,8 @@ user says "make it better than other models", they mean make the
 | `battle_test.py` | 1418 | 491-check hostile test suite, sections A-N |
 | `example.py` | 92 | Minimal 4-rover worked example |
 | `paper/main.tex` | 662 | The paper (article class, TikZ/pgfplots, booktabs) |
-| `paper/fig_testbed.{tex,pdf}` | - | fiziko testbed figure, PDF committed |
+| `paper/fig_testbed.{tex,pdf}` | - | old fiziko testbed figure, no longer used by the paper |
+| `paper/figs_doc/*.pdf` | - | matplotlib result figures (`make_figures.py`); the paper uses `fig_budget_sweep.pdf` |
 | `paper/build.sh` | - | Paper build script |
 | `changes.md` | - | Log of external review rounds and responses |
 | `PROJECT_GUIDE.md` | - | Plain-language full explainer for humans |
@@ -266,8 +266,9 @@ the console's minimum is 2.
   Allocation in Dynamic Rover Networks: a QUBO Formulation with a
   Solver-Level Audit". Anonymous authors.
 - **No em dashes anywhere in the paper** (explicit user requirement).
-- Figures are TikZ/pgfplots inline except `fig_testbed.pdf` (fiziko
-  rendering, committed). The solver bar chart has bars for SQA/bit-SA/
+- Figures are TikZ/pgfplots inline except `figs_doc/fig_budget_sweep.pdf`
+  (matplotlib, committed). The fiziko testbed figure was dropped in the
+  2026-10-20 rewrite. The solver bar chart has bars for SQA/bit-SA/
   neal/tabu plus `exact (CBC)` at 100 as the ground-truth reference; the
   old `projected` bar was deliberately removed (user request).
 - Captions must describe the figure only; no meta-commentary like "fiziko

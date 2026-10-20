@@ -73,9 +73,10 @@ objective becomes
 \begin{equation}
 \sum_k Q_{kk}z_k+2\sum_{k<l}Q_{kl}\,y_{kl}+\mathrm{const},
 \end{equation}
-and CBC minimises it. The procedure accepts the answer only if CBC reports
-proven optimality; if the solver stops for any other reason, such as a time
-limit, the instance is skipped rather than scored. One auxiliary variable per
+and CBC minimises it. An answer is only used when CBC reports that it has
+proven optimality. If the solver stops for some other reason, for example
+because it hit the time limit, that instance is left out instead of being
+scored. One auxiliary variable per
 non-zero pair makes the program grow quadratically, so this baseline is used
 for matrices with at most about 60 variables, where it serves as the ground
 truth of the sampler benchmark.
@@ -95,40 +96,42 @@ infeasible minimum;
 MILP returns exactly the four optimal edges with soft energy $-1.750$.
 \end{itemize}
 
-Once agreement was established on small instances, the direct MILP became
-the referee for larger ones, where enumeration is impossible.
+After the methods agreed on the small instances, we used the direct MILP as
+the reference for the larger ones, where enumerating every subset is not
+possible.
 
 \section{Results}
 
-Table~\ref{tab:exact:summary} compares the projected annealer with the exact
-MILP on 20 instances with up to 40 optional edges, and
-Table~\ref{tab:exact:scaling} adds the MILP optimum to the scaling study where
-it could be computed.
+In Table~\ref{tab:exact:summary} the projected annealer is compared with the
+exact MILP on 20 instances that have up to 40 optional edges.
+Table~\ref{tab:exact:scaling} returns to the scaling study and adds the MILP
+optimum for the sizes where we could compute it.
 
 \begin{table}[htbp]
 \centering
-\caption{Projected annealing against the exact MILP on 20 instances.}
+\caption{Projected annealer and exact MILP compared on 20 instances.}
 \label{tab:exact:summary}
 \small
 \begin{tabular}{@{}l r r@{}}
 \toprule
 Measure & Projected annealer & MILP (CBC) \\
 \midrule
-Instances solved exactly & 95\% & 100\% (by definition) \\
-Mean normalised gap & $7\times10^{-5}$ & 0 \\
-Worst normalised gap & $1.4\times10^{-3}$ & 0 \\
-Wall-clock per instance & about 2.1~s & about 11 to 15~ms \\
-Optimality certificate & no & yes \\
+Share solved exactly & 95\% & 100\% (by definition) \\
+Average normalised gap & $7\times10^{-5}$ & 0 \\
+Largest normalised gap & $1.4\times10^{-3}$ & 0 \\
+Time per instance & about 2.1~s & about 11 to 15~ms \\
+Proves optimality & no & yes \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{table}[htbp]
 \centering
-\caption[Soft energy (lower is better) on the scaling instances: projected annealing, a greedy top-$K$ baseline repaired to feasibility, and the exact MILP where available.]{Soft energy (lower is better) on the scaling instances: projected
-annealing, a greedy top-$K$ baseline repaired to feasibility, and the exact
-MILP where available. Connectivity is enforced for $n\le20$; at $n=10$ the
-repaired greedy edge set is infeasible.}
+\caption[Soft energy on the scaling instances.]{Soft energy on the scaling instances (lower values
+are better) for the projected annealer, a greedy top-$K$ baseline that is
+repaired to feasibility, and the exact MILP where we could run it.
+Connectivity is only enforced up to $n=20$, and at $n=10$ the repaired greedy
+edge set is still infeasible.}
 \label{tab:exact:scaling}
 \small
 \begin{tabular}{@{}r r r r@{}}
@@ -143,20 +146,22 @@ $n$ & Projected & Greedy (repaired) & MILP \\
 \end{tabular}
 \end{table}
 
-Two observations follow. First, the projected annealer is close to exact:
-identical at ten rovers, within about 2\% of the optimum at twenty, and far
-ahead of the repaired greedy baseline at every size, with a margin that grows
-with the fleet (3.3 energy units at 20 rovers, 12.4 at 50). Second, and
-uncomfortably for any QUBO-first story, the MILP is exact \emph{and} roughly
-100 times faster.
+We take two things from these tables. The first is that the projected
+annealer comes very close to the exact answer. It matches the optimum at ten
+rovers and is within about 2\% of it at twenty. It is also well ahead of the
+repaired greedy baseline at every size, and the lead gets bigger as the fleet
+grows (3.3 energy units at 20 rovers and 12.4 at 50). The second point is less
+comfortable for anyone who wants to put the QUBO first: the MILP is exact
+\emph{and} about 100 times faster.
 
 \section{Positioning the QUBO}
 
-The honest conclusion is that on classical hardware the direct MILP
-dominates: it is exact, it certifies its answer, and it runs in milliseconds.
-What remains for the QUBO encoding is precisely its original purpose. It is
-the input format of quantum and quantum-inspired annealing hardware, and the
-projected annealer is a strong classical stand-in that solves the encoded
-problem near-exactly until such hardware is evaluated. The report states this
-plainly, and the interactive engine of Chapter~\ref{ch:engine} repeats it next
-to every comparison it shows, rather than overselling the formulation.
+So, on classical hardware, the direct MILP is the better tool. It finds the
+exact answer, proves that the answer is optimal, and does so in milliseconds.
+The QUBO encoding is still useful for the reason it was built in the first
+place. Quantum and quantum-inspired annealers take their input in this form,
+and until we can test such hardware, the projected annealer acts as a good
+classical substitute that solves the encoded problem almost exactly. We say
+this openly in the report, and the interactive engine of
+Chapter~\ref{ch:engine} shows the same note beside each comparison so that the
+formulation is not oversold.

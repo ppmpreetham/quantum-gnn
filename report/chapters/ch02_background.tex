@@ -21,10 +21,12 @@ $h_i$ with an aggregate of its neighbours' states:
 m_i=\mathop{\mathrm{AGG}}_{j\in\mathcal N(i)} h_j,\qquad h_i'=\phi(h_i,m_i),
 \label{eq:bg:mp}
 \end{equation}
-with a permutation-invariant $\mathrm{AGG}$ and a learned update $\phi$. Two
-properties matter here: inference cost is proportional to the number of edges,
-so pruning saves fog compute; and weighting messages by link trust and quality
-lets a node discount neighbours it cannot rely on.
+with a permutation-invariant $\mathrm{AGG}$ and a learned update $\phi$. For
+this project two properties of message passing are important. The cost of
+inference grows with the number of edges, so a pruned graph needs less work on
+the fog device. Also, if messages are weighted by the trust and quality of the
+link they travel over, a node can give less weight to neighbours that it cannot
+rely on.
 
 \section{QUBO Models and the Penalty Method}
 
@@ -34,48 +36,56 @@ $z\in\{0,1\}^N$ minimising
 H(z)=z^{\top}Qz+\mathrm{const}
 \label{eq:bg:qubo}
 \end{equation}
-for a symmetric matrix $Q$; since $z_k^2=z_k$, the diagonal holds linear terms.
-The substitution $z_k=(1+\sigma_k)/2$ with spins $\sigma_k\in\{-1,+1\}$ gives
-an Ising model, so the same problem runs on classical, quantum-inspired and
-quantum annealers. Glover et~al.~\cite{glover2019} and Lucas~\cite{lucas2014}
-survey formulation techniques. A QUBO has no constraints, so constraints become
-penalties: an equality $\sum_ka_kx_k=b$ adds $\rho(\sum_ka_kx_k-b)^2$, and an
-inequality first gains a non-negative integer slack written in binary. The
-weight $\rho$ must make every violation unprofitable; Chapter~\ref{ch:solvers}
-shows the price of that safety.
+where $Q$ is a symmetric matrix. Because $z_k^2=z_k$ for binary variables,
+the linear terms can be stored on the diagonal. Writing $z_k=(1+\sigma_k)/2$
+with spins $\sigma_k\in\{-1,+1\}$ turns the problem into an Ising model, which
+is why the same problem can be given to classical, quantum-inspired and quantum
+annealers. Formulation techniques are surveyed by Glover
+et~al.~\cite{glover2019} and by Lucas~\cite{lucas2014}. Since a QUBO cannot
+hold constraints directly, each constraint is turned into a penalty term. An
+equality $\sum_ka_kx_k=b$ becomes $\rho(\sum_ka_kx_k-b)^2$, and an inequality
+is first given a non-negative integer slack variable, written in binary. The
+weight $\rho$ has to be large enough that breaking any constraint never pays
+off, and Chapter~\ref{ch:solvers} shows what this safety costs.
 
 \section{Annealing, Tabu Search and Exact Solvers}
 
-Simulated annealing~\cite{kirkpatrick1983} proposes small changes and accepts
-an uphill move of $\Delta E$ with probability $\exp(-\Delta E/\tau_{\mathrm{SA}})$
-while the temperature $\tau_{\mathrm{SA}}$ is lowered; D-Wave's Ocean
-software~\cite{ocean} provides the production \emph{neal} sampler. Quantum
-annealing~\cite{kadowaki1998} replaces thermal fluctuations with tunnelling
-driven by a transverse field, and simulated quantum annealing emulates it
-classically; the OpenJij library~\cite{openjij} provides such a sampler. Tabu
-search~\cite{glover1989} is a local search that forbids recent moves to escape
-local minima. All four change a few bits of $z$ at a time, the property that
-decides their fate in Chapter~\ref{ch:solvers}.
+Simulated annealing~\cite{kirkpatrick1983} works by proposing small changes.
+A change that raises the energy by $\Delta E$ is still accepted with
+probability $\exp(-\Delta E/\tau_{\mathrm{SA}})$, and the temperature
+$\tau_{\mathrm{SA}}$ is slowly reduced during the run. D-Wave's Ocean
+software~\cite{ocean} includes \emph{neal}, a production simulated annealing
+sampler. In quantum annealing~\cite{kadowaki1998}, tunnelling driven by a
+transverse field takes the place of thermal fluctuations. Simulated quantum
+annealing imitates this process on a classical computer, and the OpenJij
+library~\cite{openjij} provides a sampler of this kind. Tabu
+search~\cite{glover1989} is a local search method that escapes local minima by
+forbidding moves made recently. What these four methods have in common is that
+they change only a few bits of $z$ at each step, and Chapter~\ref{ch:solvers}
+shows that this is exactly what limits them.
 
-A mixed-integer linear program (MILP) minimises a linear objective under
-linear constraints with some integer variables, and branch-and-cut solvers such
-as CBC~\cite{cbc} solve it exactly with a certificate of optimality.
-Connectivity of a required node set has a compact MILP form, a
-\emph{single-commodity flow} in which a root sends one unit to each required
-node over selected edges; network-flow theory~\cite{ahuja1993} guarantees
-integral flows for integral data, so flow variables can stay continuous.
+A mixed-integer linear program (MILP) has a linear objective, linear
+constraints and some variables that must take integer values. Branch-and-cut
+solvers such as CBC~\cite{cbc} solve such programs exactly and prove that the
+answer is optimal. Requiring a set of nodes to be connected can be written
+compactly as a MILP using a \emph{single-commodity flow}: a root node sends one
+unit of flow to every required node, and flow may only use selected edges. A
+standard result of network-flow theory~\cite{ahuja1993} says that the flows are
+integral whenever the data are integral, so the flow variables can be left
+continuous.
 
 \section{Fog Computing, Trust and Task Allocation}
 
-Bonomi et~al.~\cite{bonomi2012} describe fog computing as a tier between
-devices and the cloud that places computation near the data; the deployment
-here follows that split. Trust and reputation models estimate reliability from
-observed behaviour; Sabater and Sierra~\cite{sabater2005} review computational
-trust models and Ingole et~al.~\cite{ingole2023} survey trust in multi-robot
-systems. The cheapest useful model is an exponentially weighted moving average
-of outcomes. When trust is estimated without any graph, choosing the most
-trusted rover is a multi-armed bandit problem~\cite{auer2002}, so a trust-only
-baseline is the strongest simple competitor and is included explicitly. In the
+Bonomi et~al.~\cite{bonomi2012} introduced fog computing as a layer that sits
+between devices and the cloud, so that computation happens close to where the
+data is produced, and our deployment uses the same arrangement. Trust and
+reputation models judge how reliable an agent is from what it has done before,
+and Sabater and Sierra~\cite{sabater2005} review many such models. The simplest
+model that is still useful is an exponentially weighted moving average of
+outcomes. If trust is estimated without using the graph at all, picking the
+most trusted rover becomes a multi-armed bandit problem~\cite{auer2002}. A
+trust-only baseline is therefore the strongest simple competitor, and we
+include it as a separate baseline. In the
 taxonomy of Korsah et~al.~\cite{korsah2013}, our setting has single-task robots,
 single-robot tasks and instantaneous assignment, recomputed every cycle.
 
@@ -86,18 +96,20 @@ ROS~2~\cite{macenski2022} is the standard robot middleware: programs are
 is an open-source multi-robot simulator; its current generation, Gazebo
 Harmonic, describes worlds and robots in the Simulation Description Format
 (SDF), and a bridge forwards its state into ROS~2. In the browser, WebGL exposes
-the GPU and three.js~\cite{threejs} manages scenes on top of it. The decisive
-performance quantity is the number of \emph{draw calls}, each carrying fixed
-driver overhead; \emph{instanced rendering} draws many copies of a geometry in
-one call, and \emph{geometry merging} combines parts that share a material.
-Chapter~\ref{ch:engine} uses both to keep the whole fleet within a handful of
+the GPU and three.js~\cite{threejs} manages scenes on top of it. What matters
+most for performance is the number of \emph{draw calls}, because every call
+has a fixed cost in the graphics driver. \emph{Instanced rendering} draws many
+copies of the same geometry with a single call, and \emph{geometry merging}
+joins parts that use the same material into one mesh. Chapter~\ref{ch:engine}
+uses both techniques so that the entire fleet is drawn with only a few
 calls.
 
 \section{Survey of Related Work}
 
-Several works prune the input graph of a GNN. STEP~\cite{li2023step} learns a
-self-supervised pruner for large dynamic graphs but uses graph statistics
-alone, without telemetry such as trust, link quality or battery.
+A number of papers prune the input graph of a GNN. STEP~\cite{li2023step}
+trains a self-supervised pruner for large dynamic graphs, but it relies only on
+graph statistics and does not use telemetry like trust, link quality or battery
+level.
 CGP~\cite{liu2024cgp} co-sparsifies structure, features and weights during
 training, Wang et~al.~\cite{wang2022} score edges by their effect on the loss,
 and Peng et~al.~\cite{peng2022} sparsify GNN weights and structure; all target
@@ -135,11 +147,12 @@ This project & constrained QUBO pruning, trust GNN, solver audit, two simulators
 
 \section{Research Gap}
 
-To our knowledge, constrained QUBO pruning combined with online trust-aware
-GNN inference for rover task allocation has not been reported, and three gaps
-remain open: pruning methods do not enforce hard combinatorial constraints;
-trust-aware allocation methods do not propagate trust through message passing;
-and QUBO applications seldom validate solver output against exact ground
-truth, so solver failures can be mistaken for properties of a formulation. This
-project addresses all three and adds what most proposals omit, an honest
-comparison against the strongest classical alternative.
+As far as we know, no earlier work combines constrained QUBO pruning with
+online trust-aware GNN inference for allocating tasks to rovers. We see three
+open gaps. First, existing pruning methods do not enforce hard combinatorial
+constraints. Second, trust-aware allocation methods do not spread trust through
+message passing. Third, papers that use QUBOs rarely check the solver's output
+against an exact solution, so a solver failure can easily be blamed on the
+formulation. This project works on all three gaps. It also compares the
+pipeline with the strongest classical alternative available, a step that many
+proposals leave out.

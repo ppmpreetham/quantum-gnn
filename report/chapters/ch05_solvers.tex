@@ -63,9 +63,9 @@ A to the better region B needs a climb of at least 100.}
 
 To rule out a weak implementation as the explanation, the actual Q matrices
 of our instances were given to four annealing-family solvers. The benchmark
-uses 25 small instances with four to seven rovers and at most sixteen
-optional edges, generated with tight degree and budget caps so that the
-constraints bind. The ground truth $H^{*}$ of every instance is the exact
+uses 25 small instances, each with four to seven rovers and no more than
+sixteen optional edges. We generated them with tight degree and budget caps,
+so the constraints actually limit the answer. The ground truth $H^{*}$ of every instance is the exact
 optimum of the linearised Q matrix solved by CBC (Chapter~\ref{ch:exact}),
 cross-checked against exhaustive enumeration of all edge subsets on instances
 with at most 60 QUBO variables. Each sampler's answer is projected to the
@@ -123,42 +123,45 @@ pass through an infeasible intermediate state when done one edge at a time.
 \subsubsection{Projection} Every candidate edge set is projected back onto
 the feasible manifold by an exact repair procedure: degree and budget slacks
 are computed in closed form from the selected edges, and a spanning-tree flow
-from the root to every required rover is recomputed. If no feasible
-completion exists, for example because the candidate disconnects a required
-rover, the move is rejected outright.
+from the root to every required rover is recomputed. Sometimes no feasible
+completion exists, for example when the candidate cuts off a required rover,
+and in that case the move is simply rejected.
 
-\subsubsection{Objective} For a feasible state every penalty term vanishes,
-so the energy reduces to the soft objective, which costs $O(|O|)$ to
-evaluate. The solver therefore still minimises exactly $H(z)$, restricted to
-the feasible manifold, and the matrix $Q$ remains available for export to
+\subsubsection{Objective} In a feasible state all of the penalty terms are
+zero, so the energy is just the soft objective, and computing it takes
+$O(|O|)$ time. This means the solver is still minimising exactly $H(z)$, only
+over the feasible states, and the matrix $Q$ can still be exported to
 annealing hardware.
 
-\subsubsection{Seeding and restarts} Restarts begin from degree-cap-aware
-random spanning trees. Greedy edge-by-edge growth is not used for seeding,
-because with connectivity constraints every proper prefix of a feasible tree
-can be infeasible, so a greedy builder can stall before it ever reaches a
-legal state. The first restart may instead start from a \emph{warm} edge set,
-the previous cycle's decision intersected with the live graph.
+\subsubsection{Seeding and restarts} Each restart begins from a random
+spanning tree that respects the degree caps. We do not grow the starting point
+greedily, one edge at a time. With connectivity constraints, every partial
+version of a feasible tree may itself be infeasible, and a greedy builder can
+get stuck before it ever reaches a valid state. The first restart can instead
+begin from a \emph{warm} edge set, which is the previous cycle's decision
+restricted to the links that still exist.
 
-\subsubsection{Polish} After the temperature schedule ends, a deterministic
-polish alternates single-toggle and pairwise-swap passes until no single move
-improves the energy, a local fixed point.
+\subsubsection{Polish} When the temperature schedule is over, a deterministic
+polish step takes over. It switches between passes of single toggles and
+passes of pairwise swaps, and stops once no single move lowers the energy any
+further.
 
-Because every candidate is feasible by construction, the penalty walls never
-appear in the search; only the soft landscape, with energy differences of
-order one, has to be traversed. This is the sense in which projection
-\emph{removes} the barrier rather than tuning around it.
+Since every candidate is feasible by construction, the search never meets the
+penalty walls. It only has to move around the soft landscape, where energy
+differences are of order one. In this sense projection \emph{removes} the
+barrier instead of tuning the solver to get around it.
 
-The benchmark schedule cools from temperature 1.0 to 0.01 at rate 0.998 with
-four steps per temperature and five restarts; inside the closed loop a faster
-schedule (rate 0.995, two steps, two restarts) is used, the warm start counting
-as one restart. Pseudo-code is given in Appendix~1.
+For the benchmark, the schedule cools from temperature 1.0 to 0.01 at rate
+0.998, with four steps at each temperature and five restarts. Inside the
+closed loop we use a faster schedule (rate 0.995, two steps, two restarts), and
+the warm start counts as one of the restarts. Appendix~1 gives the
+pseudo-code.
 
 \section{How Good Is the Projected Annealer?}
 
-The projected annealer is deliberately kept \emph{out} of the sampler
-comparison above, because its move set is richer than single bit flips and
-the comparison would not be like for like. Its own performance is reported
+We left the projected annealer \emph{out} of the sampler comparison above on
+purpose. Its moves do more than flip single bits, so putting it next to the
+samplers would not be a fair comparison. Its own performance is reported
 separately, as an engineering result.
 
 \begin{enumerate}[label=\arabic*.]

@@ -56,7 +56,7 @@ simulators share one rover.
 
 \begin{table}[htbp]
 \centering
-\caption{The Gazebo world and the rover model.}
+\caption{Settings of the Gazebo world and of the rover model.}
 \label{tab:gz:world}
 \small
 \begin{tabularx}{\linewidth}{@{}l X@{}}
@@ -128,16 +128,18 @@ assignment message.
 \end{algorithmic}
 \end{algorithm}
 
-Four design choices are worth noting. Link quality is a \emph{deterministic}
-function of distance, because Gazebo models geometry rather than radio
-propagation; repeated runs are then comparable while Gazebo stays responsible
-for where the rovers are. A short annealing schedule (temperatures 0.5 to 0.05,
-cooling 0.8, two restarts) solves four rovers in about 13~ms, far inside the
-cycle. The node starts from the world's spawn poses, so it decides sensibly
-while the bridge is still starting, and its status reports how many rovers have
-delivered odometry, so a missing bridge is visible at once. If the physical
-graph ever becomes infeasible, the node keeps every link and marks the cycle,
-so the demonstration never stops silently.
+Four design choices are worth explaining. First, link quality depends only on
+distance, in a \emph{deterministic} way. Gazebo simulates geometry but not radio
+signals, so this keeps repeated runs comparable while Gazebo still decides
+where the rovers are. Second, we use a short annealing schedule (temperatures
+0.5 to 0.05, cooling 0.8, two restarts), which solves the four-rover problem in
+about 13~ms, much less than the length of a cycle. Third, the node begins from
+the spawn poses of the world, so it can make reasonable decisions while the
+bridge is still starting up. Its status message also says how many rovers have
+sent odometry, which makes a missing bridge obvious straight away. Fourth, if
+the physical graph ever becomes infeasible, the node keeps all the links and
+flags that cycle. The demonstration therefore never stops without telling the
+user why.
 
 \section{Packaging and Launch}
 
@@ -177,8 +179,9 @@ live node receives while the rovers remain where they spawned.
 
 \begin{table}[htbp]
 \centering
-\caption[Planner cycles on the spawn line-up (all 5 candidate links kept in every cycle, solve 12 to 16~ms).]{Planner cycles on the spawn line-up (all 5 candidate links kept in
-every cycle, solve 12 to 16~ms). Trust is shown after each cycle.}
+\caption[Planner cycles with the rovers at their spawn positions.]{Planner cycles with the rovers at their spawn positions. All 5
+candidate links were kept in every cycle and each solve took 12 to 16~ms. The
+trust values are the ones after each cycle.}
 \label{tab:gz:run}
 \small
 \begin{tabular}{@{}r c c r r r r@{}}
@@ -193,19 +196,21 @@ Cycle & Critical task & Routine task & $T_0$ & $T_1$ & $T_2$ & $T_3$ \\
 \end{tabular}
 \end{table}
 
-Two observations are instructive. The pruner keeps all five links every cycle:
-on a short, healthy line-up every link's utility is far above the sparsity
-penalty and neither the caps nor the budget bind, so keeping everything is
-optimal; pruning starts to matter when weak or costly links appear, as in the
-larger fleets of Chapter~\ref{ch:results}. And trust visibly steers
-assignment: rover~3 wins the critical task while trusted, fails in cycle~3,
-drops from 0.92 to 0.50, and the task moves to rover~1 from the next cycle.
+Two things stand out in this run. The first is that the pruner keeps all five
+links in every cycle. The line-up is short and every link is healthy, so each
+link's utility is far above the sparsity penalty, and neither the caps nor the
+budget are tight. Keeping every link is then the optimal choice. Pruning only
+starts to make a difference once weak or expensive links show up, as they do
+in the larger fleets of Chapter~\ref{ch:results}. The second is that trust
+clearly changes the assignment. Rover~3 gets the critical task while it is
+trusted, then fails in cycle~3, its trust falls from 0.92 to 0.50, and from the
+next cycle onwards the task goes to rover~1.
 
-The integration is honest about its limits. The node consumes odometry but
-publishes no velocity commands, so the rovers currently hold their spawn
-poses; adding a waypoint follower that uses the controller of
-Chapter~\ref{ch:engine} is the next step and would make the graph change from
-cycle to cycle. Link quality has no radio model, outcomes are sampled from
+This integration also has clear limits. The node reads odometry but does not
+send any velocity commands, so for now the rovers stay at their spawn poses.
+The next step is a waypoint follower built on the controller from
+Chapter~\ref{ch:engine}, which would make the graph change between
+cycles. Link quality has no radio model, outcomes are sampled from
 assumed reliabilities, and the world is written for four rovers. Even so, the
 unchanged pipeline runs against live simulator state inside standard robot
 middleware, is reproducible with one command, and exposes every decision on an

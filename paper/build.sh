@@ -1,14 +1,13 @@
 #!/usr/bin/env bash
-# Build the paper. fiziko figure needs lualatex + luamplib + fiziko.mp
-# (clone https://github.com/jemmybutton/fiziko into paper/fiziko/).
+# Build the paper with tectonic when available, otherwise with pdflatex.
 set -e
-cd "$(dirname "$0)"
+cd "$(dirname "$0")"
 
-if [ -f fiziko/fiziko.mp ]; then
-  TEXINPUTS="fiziko//:" lualatex -interaction=nonstopmode fig_testbed.tex
+if command -v tectonic >/dev/null 2>&1; then
+  tectonic main.tex
+elif [ -x /tmp/tectonic ]; then
+  /tmp/tectonic main.tex
 else
-  echo "fiziko not found in paper/fiziko; using TikZ fallback figure"
+  pdflatex -interaction=nonstopmode main.tex
+  pdflatex -interaction=nonstopmode main.tex
 fi
-
-pdflatex -interaction=nonstopmode main.tex
-pdflatex -interaction=nonstopmode main.tex

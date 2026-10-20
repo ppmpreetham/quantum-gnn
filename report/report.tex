@@ -7,6 +7,8 @@
 %
 %  Every field the authors still have to complete is marked
 %  [TO FILL: ...] in bold and is listed in the last appendix.
+%  Per-member copies: run build_copies.sh, which sets the candidate
+%  fields below and drops that appendix.
 % =====================================================================
 \documentclass[12pt,a4paper,oneside]{report}
 
@@ -24,6 +26,8 @@
       BoldFont=*-bold, ItalicFont=*-italic, BoldItalicFont=*-bolditalic]}
   \usepackage{unicode-math}
   \setmathfont{texgyretermes-math.otf}
+  % Termes math has no U+29F5, which unicode-math uses for \setminus
+  \AtBeginDocument{\renewcommand{\setminus}{\mathbin{\backslash}}}
 \fi
 \usepackage{graphicx}
 \usepackage{booktabs}
@@ -44,7 +48,7 @@
 \usepackage{algpseudocode}
 \usepackage{caption}
 \usepackage{microtype}
-\usepackage[hidelinks]{hyperref}
+\usepackage[hidelinks,linktoc=page]{hyperref}
 
 % ---------------- body text: 12 pt, 1.5 spacing, justified ----------------
 \onehalfspacing
@@ -82,14 +86,18 @@
 \renewcommand{\listfigurename}{LIST OF FIGURES}
 \renewcommand{\listtablename}{LIST OF TABLES}
 \renewcommand{\bibname}{REFERENCES}
-\renewcommand{\cftchappresnum}{Chapter }
-\setlength{\cftchapnumwidth}{5.6em}
-\renewcommand{\cfttoctitlefont}{\hfill\normalfont\fontsize{14}{17}\selectfont\bfseries}
-\renewcommand{\cftaftertoctitle}{\hfill}
-\renewcommand{\cftloftitlefont}{\hfill\normalfont\fontsize{14}{17}\selectfont\bfseries}
-\renewcommand{\cftafterloftitle}{\hfill}
-\renewcommand{\cftlottitlefont}{\hfill\normalfont\fontsize{14}{17}\selectfont\bfseries}
-\renewcommand{\cftafterlottitle}{\hfill}
+% list headings sit on the left in bold 14 pt; contents entries are in capitals, as in the template
+\renewcommand{\cftchappresnum}{CHAPTER }
+\setlength{\cftchapnumwidth}{6.8em}
+\renewcommand{\cfttoctitlefont}{\normalfont\fontsize{14}{17}\selectfont\bfseries}
+\renewcommand{\cftloftitlefont}{\normalfont\fontsize{14}{17}\selectfont\bfseries}
+\renewcommand{\cftlottitlefont}{\normalfont\fontsize{14}{17}\selectfont\bfseries}
+\setlength{\cftbeforetoctitleskip}{0pt}
+\setlength{\cftbeforeloftitleskip}{0pt}
+\setlength{\cftbeforelottitleskip}{0pt}
+\setlength{\cftaftertoctitleskip}{14pt}
+\setlength{\cftafterloftitleskip}{14pt}
+\setlength{\cftafterlottitleskip}{14pt}
 \renewcommand{\cftchapleader}{\cftdotfill{\cftdotsep}}
 \cftsetpnumwidth{2.2em}
 \cftsetrmarg{3.2em}
@@ -106,6 +114,31 @@
 \renewcommand{\algorithmicensure}{\textbf{Output:}}
 
 \newcommand{\fillme}[1]{\textbf{[TO FILL: #1]}}
+
+\makeatletter
+\let\rep@lchapter\l@chapter
+\let\rep@lsection\l@section
+\renewcommand*{\l@chapter}[2]{\rep@lchapter{\MakeUppercase{#1}}{#2}}
+\renewcommand*{\l@section}[2]{\rep@lsection{\MakeUppercase{#1}}{#2}}
+% references as in the template: "[1]. Author (year). ..." with no hanging indent
+\renewcommand\@biblabel[1]{[#1].}
+\renewenvironment{thebibliography}[1]{%
+  \chapter*{\bibname}\addcontentsline{toc}{chapter}{\bibname}%
+  \list{\@biblabel{\@arabic\c@enumiv}}{%
+    \setlength{\labelwidth}{0pt}\setlength{\labelsep}{0.5em}%
+    \setlength{\leftmargin}{0pt}\setlength{\itemindent}{\labelsep}%
+    \setlength{\itemsep}{6pt}\setlength{\parsep}{0pt}%
+    \usecounter{enumiv}\let\p@enumiv\@empty
+    \renewcommand\theenumiv{\@arabic\c@enumiv}}%
+  \clubpenalty4000\@clubpenalty\clubpenalty\widowpenalty4000\sfcode`\.\@m}
+  {\def\@noitemerr{\@latex@warning{Empty `thebibliography' environment}}\endlist}
+\makeatother
+
+% one appendix under the APPENDICES heading: "Appendix n: title", listed in the contents
+\newcommand{\appendixsection}[1]{%
+  \refstepcounter{chapter}%
+  \addcontentsline{toc}{section}{Appendix \thechapter: #1}%
+  {\noindent\fontsize{14}{17}\selectfont\bfseries Appendix \thechapter: #1\par}\vspace{10pt}}
 \newcommand{\pp}{\,pp}
 
 % ---------------- front-matter fields ----------------
@@ -113,19 +146,24 @@
 \newcommand{\projecttitle}{Quantum-Inspired Edge Pruning and Trust-Aware Graph Neural Inference for Task Allocation in Dynamic Rover Networks}
 \newcommand{\teammembers}{%
   NANDANA SATISH (23BAI1568)\\[4pt]
-  PREETHAM PEMMASANI (23BRS1346)\\[4pt]
+  P PREETHAM (23BRS1346)\\[4pt]
   BIRESH BISWAS (23BRS1255)}
 \newcommand{\submissionmonth}{October, 2026}
 \newcommand{\guidename}{Selvam D}
+\providecommand{\guidetitle}{Dr.}
 \newcommand{\guidedesignation}{Assistant Professor Senior Grade I}
 \newcommand{\guidearea}{Quantum Computing and Theoretical Computer Science}
-% Each member submits an individual copy: set these two lines to your own details.
-\newcommand{\candidatename}{\fillme{your name}}
-\newcommand{\candidatereg}{\fillme{your register number}}
+% Each member submits an individual copy; build_copies.sh sets these per member.
+\providecommand{\candidatename}{\fillme{your name}}
+\providecommand{\candidatereg}{\fillme{your register number}}
+\providecommand{\programme}{Artificial Intelligence and Machine Learning}
+\providecommand{\hodname}{Dr. Tulasi Prasad Sariki}
 
 % Front-matter page heading: centred, 14 pt, bold, underlined, CAPS.
 \newcommand{\frontheading}[1]{%
   \begin{center}{\fontsize{14}{17}\selectfont\bfseries\underline{#1}}\end{center}\vspace{10pt}}
+% List heading (contents, lists, symbols): left, 14 pt, bold, CAPS.
+\newcommand{\listheading}[1]{{\noindent\fontsize{14}{17}\selectfont\bfseries #1\par}\vspace{14pt}}
 
 \begin{document}
 
@@ -138,7 +176,7 @@
     \vspace{1.0cm}
     {\fontsize{14}{17}\selectfont\itshape Submitted in partial fulfillment for the award of the degree of\par}
     \vspace{0.7cm}
-    {\fontsize{22}{27}\selectfont\bfseries Bachelor of Technology in Computer Science and Engineering (Artificial Intelligence and Machine Learning)\par}
+    {\fontsize{22}{27}\selectfont\bfseries Bachelor of Technology in Computer Science and Engineering (\programme)\par}
     \vspace{0.7cm}
     {\fontsize{14}{17}\selectfont\itshape by\par}
     \vspace{0.5cm}
@@ -161,10 +199,11 @@
 \titleblock
 \end{titlepage}
 
-\pagenumbering{roman}
-\setcounter{page}{1}
+% Declaration and certificate carry no page number; roman numbering starts at the abstract.
+\pagenumbering{Alph}
 
 % ============================== DECLARATION ==============================
+\thispagestyle{empty}
 \begin{center}\includegraphics[width=6cm]{figures/vit-logo.jpg}\end{center}
 \vspace{0.8cm}
 \frontheading{DECLARATION}
@@ -183,10 +222,11 @@ institute or university.
 \vspace{2cm}
 \noindent\textbf{Place:} Chennai\\
 \noindent\textbf{Date:} \hfill \textbf{Signature of the Candidate}\\[4pt]
-\noindent\hfill\textbf{\candidatename}
+\noindent\null\hfill\textbf{\candidatename}
 \clearpage
 
 % ============================== CERTIFICATE ==============================
+\thispagestyle{empty}
 \begin{center}
 \includegraphics[width=5.2cm]{figures/vit-logo.jpg}\\[0.3cm]
 {\fontsize{14}{17}\selectfont\bfseries School of Computer Science and Engineering\par}
@@ -199,7 +239,7 @@ This is to certify that the report entitled ``\projecttitle'' is prepared
 and submitted by \candidatename\ (\candidatereg) to Vellore Institute of
 Technology, Chennai, in partial fulfillment of the requirement for the award
 of the degree of Bachelor of Technology in Computer Science and Engineering
-(Artificial Intelligence and Machine Learning) is a bonafide record carried
+(\programme) is a bonafide record carried
 out under my guidance. The project fulfills the requirements as per the
 regulations of this University and in my opinion meets the necessary
 standards for submission. The contents of this report have not been
@@ -208,7 +248,7 @@ of any other degree or diploma and the same is certified.
 
 \vspace{0.7cm}
 \noindent\textbf{Signature of the Guide:}\\[4pt]
-\noindent\textbf{Name:} Dr./Prof. \guidename\\[4pt]
+\noindent\textbf{Name:} \guidetitle\ \guidename\\[4pt]
 \noindent\textbf{Date:}
 
 \vspace{0.8cm}
@@ -222,14 +262,16 @@ Date: & Date:\\
 \begin{center}
 Approved by the Head of Department,\\
 Computer Science and Engineering\\
-(Artificial Intelligence and Machine Learning)\\[6pt]
-Name: Dr. Tulasi Prasad Sariki\\
+(\programme)\\[6pt]
+Name: \hodname\\
 Date:\\[0.6cm]
 (Seal of SCHOOL YOU BELONG TO)
 \end{center}
 \clearpage
 
 % =============================== ABSTRACT ================================
+\pagenumbering{roman}
+\setcounter{page}{1}
 \phantomsection
 \addcontentsline{toc}{chapter}{Abstract}
 \frontheading{ABSTRACT}
@@ -291,9 +333,9 @@ Dean, School of Computer Science and Engineering, Vellore Institute of
 Technology, Chennai for spending their valuable time and efforts in sharing
 their knowledge and for helping us in every aspect.
 
-In jubilant state, I express ingeniously my whole-hearted thanks to Dr.
-Tulasi Prasad Sariki, Head of the Department, B.Tech. Computer Science and
-Engineering (Artificial Intelligence and Machine Learning) and the Project
+In jubilant state, I express ingeniously my whole-hearted thanks to
+\hodname, Head of the Department, B.Tech. Computer Science and
+Engineering (\programme) and the Project
 Coordinators for their valuable support and encouragement to take up and
 complete the thesis.
 
@@ -344,10 +386,12 @@ my friends who encouraged me to take up and complete this task.
 \input{chapters/ch12_engine}
 \input{chapters/ch13_conclusion}
 
+% ============================== APPENDICES ==============================
+% The template's sample pages place the appendices before the references.
+\input{chapters/appendices}
+\ifdefined\finalcopy\else\input{chapters/appendix_fill}\fi
+
 % ============================== REFERENCES ==============================
 \input{chapters/references}
-
-% ============================== APPENDICES ==============================
-\input{chapters/appendices}
 
 \end{document}

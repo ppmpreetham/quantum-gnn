@@ -3,11 +3,12 @@
 
 \section{Role of the Inference Stage}
 
-Pruning decides which links the fleet will use; inference decides which rovers
-do the work. The stage runs on the fog device every cycle, so it must be cheap,
-and it combines what a rover is (trust, battery, free compute, capability) with
-where it sits in the kept graph (how reliable its neighbours are and how well
-its results can reach the root).
+The pruner chooses the links the fleet will use, and the inference stage
+chooses which rovers will do the work. Because it runs on the fog device in
+every cycle, it has to be cheap. It looks at two kinds of information: what a
+rover is like on its own (trust, battery, free compute and capability), and
+where it sits in the kept graph, which tells us how reliable its neighbours
+are and how easily its results can get to the root.
 
 \section{Node Features and Message Weights}
 
@@ -21,10 +22,10 @@ $(i,j)$ are weighted by
 a_{ij}=T_{ij}\,L_{ij},
 \end{equation}
 the product of the edge trust (the smaller endpoint trust) and the measured
-link quality. A neighbour reached over a high-trust, high-quality link
-therefore contributes more to a rover's aggregate than one reached over a
-poor link, and pruned edges contribute nothing at all, which is where the
-pruner's decision enters the scores.
+link quality. As a result, a neighbour connected through a trusted,
+high-quality link has more influence on a rover's aggregate than a neighbour
+behind a poor link. Pruned edges have no influence at all, and this is how the
+pruner's choice ends up affecting the scores.
 
 \section{Two-Layer Message Passing}
 
@@ -54,7 +55,8 @@ assignment depends on, and every rover in a cluster scored alike.
 
 \section{Gates, Criticality and Delivery Awareness}
 
-A raw score is not yet a decision. Three adjustments turn it into one.
+The raw score still has to be adjusted before it can be used for a decision,
+and we apply three adjustments.
 
 \subsubsection{Resource gates} A rover is ineligible for a task, with score
 zero, if its trust is below the task's minimum (0.25 in the simulator), its
@@ -84,17 +86,18 @@ own caution.
 
 \section{Capacity-Aware Greedy Assignment}
 
-Given scores for every rover and task, the assignment is greedy and
-conflict-free. All positive (score, task, rover) triples are sorted by
-decreasing score, ties broken by task name for determinism, and each triple is
-accepted if the task is still unassigned and the rover still has capacity
-(one task per rover per cycle by default). Greedy matching is not optimal in
-general, but with one task per rover and a handful of tasks per cycle it is
-close, and it costs microseconds.
+Once every rover has a score for every task, the tasks are assigned
+greedily, and no rover or task is used twice. We sort all (score, task, rover)
+triples with a positive score from highest to lowest, breaking ties by task
+name so that the result is repeatable. A triple is accepted when its task has
+not been assigned yet and its rover still has spare capacity, which by default
+means one task per rover per cycle. Greedy matching is not optimal in every
+case. With one task per rover and only a few tasks per cycle, though, it comes
+close, and it runs in microseconds.
 
-Each assignment raises the rover's load, which decays over the following
-cycles; without this feedback the most trusted rover received every task until
-its compute was exhausted.
+Every assignment increases the rover's load, and the load then falls again
+over the next few cycles. Before we added this, the most trusted rover was
+given every task until it ran out of compute.
 
 \subsubsection{Exploration} With probability $\varepsilon=0.15$ per task,
 the assigned rover is replaced by a random eligible one. Exploration keeps
@@ -124,22 +127,24 @@ with $\alpha=0.5$ and $\delta=0.1$ in the simulator.
 A rover at trust 0.5 fails once: Eq.~\eqref{eq:gnn:ewma} drops it to 0.25,
 which sits on the trust gate. If it is then idle, aging restores it as
 $0.5-0.25\times0.9^k$ after $k$ cycles, reaching 0.35 after five cycles and
-0.41 after ten. Without aging the rover would sit at 0.25 forever, never be
-chosen, and therefore never be observed again: a single unlucky failure would
-blacklist it permanently. This was observed before aging was added.
+0.41 after ten. If there were no aging, the rover would stay at 0.25, it would
+never be picked, and so we would never see it again. One unlucky failure would
+shut it out for good, and this did happen in the simulator before aging was
+added.
 \end{example}
 
-The target the trust model tracks is deliberately hard. In the simulator,
-hidden reliability is spatially correlated (nearby rovers share terrain and
-interference) and can drift over time, so trust must follow a moving,
-structured target rather than estimate a fixed coin bias. The spatial
+We made the target of the trust model hard on purpose. In the simulator the
+hidden reliability is spatially correlated, because rovers that are close to
+each other share terrain and interference, and it can also drift over time.
+Trust therefore has to follow a target that moves and has structure, which is
+harder than estimating the bias of a fixed coin. The spatial
 correlation is also what gives message passing something to exploit:
 neighbours' outcomes carry information about a rover that has not been
 observed recently.
 
 \section{Edge Lifecycle}
 
-Pruned links are not forgotten. The candidate graph is rebuilt from
+A link that has been pruned is still remembered. The candidate graph is rebuilt from
 telemetry every cycle, so a pruned link can always return, and a small state
 machine tracks each link's recent history: a link is \emph{active} while kept,
 \emph{suspect} after one prune, in \emph{probation} after two and
@@ -166,24 +171,24 @@ training uses only the exploration-tagged samples, which were assigned at
 random. With that unbiased but small dataset (78 samples), the trained
 readout did \emph{not} improve held-out mission success over the fixed
 weights (32.8\% against 36.7\%, a difference of $-3.9$ points with 95\% CI
-$[-11.7,+11.7]$ and $p=0.49$). This is reported as a null result rather than
-tuned until it looked better; a larger exploration budget is listed as future
-work.
+$[-11.7,+11.7]$ and $p=0.49$). We report this as a null result and did not
+keep tuning until the numbers looked better. Collecting more exploration data
+is part of the future work.
 
 \section{Ablation Arms}
 
-To isolate what each part contributes, the scorer can be replaced while gates,
-delivery awareness and assignment stay identical: \emph{trust-only} (score
-equals trust, the bandit-style baseline~\cite{auer2002}), \emph{no-graph} (the
-same readout on raw features, without message passing) and \emph{random}.
-Chapter~\ref{ch:results} reports their paired comparison, and the 3D engine
-runs all three alongside a live mission.
+To see how much each part helps, we can swap out the scorer and keep the
+gates, delivery awareness and assignment exactly as they are. There are three
+replacements. In \emph{trust-only} the score is simply the trust value, which
+is the bandit-style baseline~\cite{auer2002}. \emph{No-graph} uses the same
+readout on the raw features with no message passing, and \emph{random} picks
+rovers at random. Chapter~\ref{ch:results} gives the paired comparison of these
+arms, and the 3D engine can run all three next to a live mission.
 
 \section{Computational Cost}
 
-For $n$ rovers and $|E'|$ kept edges, one layer costs $O(n+|E'|)$ small
-vector operations, and the whole stage measures about 0.2~ms at ten rovers
-and about 1~ms at fifty on the evaluation machine. The constraint that
-motivated the architecture is therefore met with a large margin: inference is
-not the bottleneck of the pipeline, and Chapter~\ref{ch:results} shows that
-pruning is.
+With $n$ rovers and $|E'|$ kept edges, one layer needs $O(n+|E'|)$ small
+vector operations. On our evaluation machine the whole stage took about
+0.2~ms for ten rovers and about 1~ms for fifty. This is far inside the time
+limit that shaped the architecture. Inference is not what slows the pipeline
+down; as Chapter~\ref{ch:results} shows, pruning is.

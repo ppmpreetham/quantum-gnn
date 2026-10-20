@@ -2,10 +2,13 @@
 \appendix
 \renewcommand{\thechapter}{\arabic{chapter}}
 \setcounter{chapter}{0}
-\renewcommand{\chaptername}{Appendix}
-\addtocontents{toc}{\protect\renewcommand{\protect\cftchappresnum}{Appendix }}
+% appendix floats are numbered A1.1, A2.1, ... so they never collide with chapter numbers
+\renewcommand{\thetable}{A\arabic{chapter}.\arabic{table}}
+\renewcommand{\thefigure}{A\arabic{chapter}.\arabic{figure}}
+\chapter*{APPENDICES}
+\addcontentsline{toc}{chapter}{Appendices}
 
-\chapter{Pseudo-Code of the Pipeline, the Solver and the Motion Engine}
+\appendixsection{Pseudo-Code of the Pipeline, the Solver and the Motion Engine}
 \label{app:pseudo}
 
 This appendix gives, in algorithmic form, the per-cycle pipeline of
@@ -41,7 +44,7 @@ are described in Sections~\ref{sec:sol:ladder} and~\ref{ch:engine}.
   \State $\tau\gets\tau_0$
   \While{$\tau>\tau_f$}
     \For{$k$ times}
-      \State propose $S'$: toggle one optional edge, or swap one kept and one unkept edge
+      \State form $S'$ by switching one optional edge on or off, or by exchanging a kept edge for an unkept one
       \If{$S'$ projects to feasibility (closed-form slacks, spanning-tree flow)}
         \State accept with probability $\min\{1,\exp(-(H(S')-H(S))/\tau)\}$
       \EndIf
@@ -56,7 +59,8 @@ are described in Sections~\ref{sec:sol:ladder} and~\ref{ch:engine}.
 \end{algorithmic}
 \end{algorithm}
 
-\chapter{Constants and Settings}
+\clearpage
+\appendixsection{Constants and Settings}
 \label{app:constants}
 
 \begin{longtable}{@{}p{7.2cm}p{7.0cm}@{}}
@@ -76,9 +80,9 @@ Degree and budget penalties $\rho_d,\rho_C$ & 100 \\
 Flow penalties $\rho_F,\rho_{FC}$ & 500 \\
 Cost quantisation & $c_e=\max(1,\lfloor10\,\bar c_e\rceil)$ \\
 \multicolumn{2}{@{}l}{\emph{Solvers}} \\
-Bit-level SA default schedule & $\tau$ from 10 to $10^{-3}$, cooling 0.98, 2 sweeps, 20 restarts \\
-Projected annealer default & $\tau$ from 1.0 to 0.01, cooling 0.998, 4 steps, 5 restarts, swap probability 0.5 \\
-Projected annealer in the closed loop & cooling 0.995, 2 steps, 2 restarts \\
+Schedule of the bit-level SA (default) & start $\tau=10$, end $\tau=10^{-3}$, cooling rate 0.98, 2 sweeps, 20 restarts \\
+Projected annealer, default settings & start $\tau=1.0$, end $\tau=0.01$, cooling rate 0.998, 4 steps, 5 restarts, swap probability 0.5 \\
+Projected annealer, inside the closed loop & cooling rate 0.995, 2 steps, 2 restarts \\
 \multicolumn{2}{@{}l}{\emph{GNN and trust}} \\
 Self / neighbour weight & 0.8 / 0.2 \\
 Readout weights & 0.60, 0.15, 0.10, 0.15 \\
@@ -110,46 +114,3 @@ Telemetry rate, map rate, radar rate & 5~Hz, 30~Hz, 12~Hz \\
 Session capacity, idle eviction window & 16 sessions, 15~s \\
 \bottomrule
 \end{longtable}
-
-\chapter{Items to Complete Before Submission}
-\label{app:fill}
-
-\noindent\textbf{Delete this appendix before submission.} It lists every
-field that was not filled in automatically, because the information was
-either unknown or must differ between team members.
-
-\begin{enumerate}[label=\arabic*.]
-\item \textbf{Candidate name and register number.} The template requires each
-member to submit an individual copy with only their own name on the
-Declaration, Certificate and Acknowledgement pages. Set the two lines
-\verb|\candidatename| and \verb|\candidatereg| near the top of the main file;
-every page that needs them updates automatically.
-\item \textbf{Submission month.} The cover and title pages say
-\emph{\submissionmonth}, copied from the previous report; change it if the
-submission month differs.
-\item \textbf{Guide title.} The certificate keeps ``Dr./Prof. \guidename'' as
-in the previous report; keep whichever title applies.
-\item \textbf{Dates and signatures.} The Declaration, Certificate and
-Acknowledgement pages leave dates and signatures blank for completion by hand.
-\item \textbf{Names copied from the previous report.} The title, the three
-team members and register numbers, the guide's name, designation and area,
-and the acknowledgement text were copied unchanged; please confirm them.
-\item \textbf{References.} Entries carried over from the previous report are
-unchanged; the entry for Ingole et al. (2023) was already incomplete there and
-needs its venue. The following entries were added for new material and should
-be checked or replaced with the references you supply: Ahuja et al. (1993),
-Auer et al. (2002), Efron and Tibshirani (1993), Forrest et al. (CBC),
-Glover (1989), Jij Inc. (OpenJij), Kadowaki and Nishimori (1998), Koenig and
-Howard (2004), Korsah et al. (2013), Macenski et al. (2022), Sabater and
-Sierra (2005), Spielman and Teng (2011) and three.js.
-\item \textbf{Optional Gazebo screenshot.} Figure~\ref{fig:gz:world} is a
-schematic of the Gazebo world. A screenshot of the running world can be
-captured by starting the container with its graphical option on a machine
-with a display, and added next to it.
-\item \textbf{Optional demo video.} A link or QR code to a recording of the
-3D engine can be added to Chapter~\ref{ch:engine}.
-\end{enumerate}
-
-\noindent\textbf{3D simulation engine.} Chapter~\ref{ch:engine} describes the
-finished engine and uses screenshots captured from it; it contains no
-placeholders or stubs that remain to be filled.

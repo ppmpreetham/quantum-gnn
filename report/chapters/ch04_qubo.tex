@@ -162,9 +162,9 @@ edges.
 \end{proposition}
 
 \begin{proof}
-($\Leftarrow$) If every required rover is connected to $r$, choose a spanning
-tree of the root's component and route one unit from $r$ to each required
-rover along its unique tree path. Every arc then carries at most $m$ units,
+($\Leftarrow$) Suppose every required rover is connected to $r$. Take a
+spanning tree of the component that contains the root, and send one unit from
+$r$ to each required rover along the single path the tree gives. Every arc then carries at most $m$ units,
 conservation holds at every node with the given supplies, and each selected
 edge satisfies $f_{uv}+f_{vu}\le m$, so a slack $q_e\in[0,m]$ closes the
 capacity equality. Unselected edges carry no flow and take $q_e=0$.
@@ -248,16 +248,18 @@ where the three stability charges come from dropping $1$--$2$ and $3$--$4$
 and adding $2$--$4$. The other two feasible subsets both score $-1.555$.
 
 \subsubsection{The trap} Thirty of the 61 infeasible subsets violate only
-connectivity. The best of them, $\{0\text{--}1,0\text{--}2,1\text{--}2,
-2\text{--}3\}$, has a \emph{lower} soft energy of $-1.965$ because it keeps
-the attractive link $1$--$2$ and pays only one stability charge, but it cuts
-rover~4 off from the root. A pruner that judged edges by soft score alone, or
-checked connectivity only afterwards, would prefer it by $0.215$. In the QUBO
-the flow terms add at least 500, so its true energy is above $+498$. The
-cheapest degree or budget violator sits at $+97.475$: the barrier between it
-and the optimum is $99.2$, almost a hundred times the width of the whole
-feasible band ($[-1.750,-1.555]$). Fig.~\ref{fig:qubo:ladder} draws this
-energy ladder.
+connectivity. The best one among them is $\{0\text{--}1,0\text{--}2,
+1\text{--}2,2\text{--}3\}$. Its soft energy, $-1.965$, is actually
+\emph{lower} than the optimum's, because it keeps the attractive link
+$1$--$2$ and pays just one stability charge. The problem is that rover~4 is no
+longer connected to the root. A pruner that only looked at soft scores, or
+that checked connectivity after choosing the edges, would pick this subset,
+since it looks better by $0.215$. In the QUBO, however, the flow terms add at
+least 500 to it, which puts its real energy above $+498$. The cheapest subset
+that breaks a degree or budget constraint has energy $+97.475$. The gap
+between that subset and the optimum is $99.2$, nearly a hundred times wider
+than the whole range of feasible energies ($[-1.750,-1.555]$).
+Fig.~\ref{fig:qubo:ladder} shows these energy levels.
 
 \begin{figure}[htbp]
 \centering
@@ -265,47 +267,48 @@ energy ladder.
   lvl/.style={thick},
   lab/.style={font=\small, anchor=west},
 ]
-\draw[-{Stealth}] (0,0) -- (0,6.2) node[above, font=\small] {energy (not to scale)};
+\draw[-{Stealth}] (0,0) -- (0,6.2) node[above, font=\small] {energy (axis not to scale)};
 \draw[lvl, green!50!black] (0.3,1.0) -- (2.3,1.0); \node[lab] at (2.4,1.0) {optimum, feasible: $-1.750$};
 \draw[lvl, green!50!black] (0.3,1.6) -- (2.3,1.6); \node[lab] at (2.4,1.6) {two other feasible subsets: $-1.555$};
 \draw[lvl, red!70!black, dashed] (0.3,0.35) -- (2.3,0.35); \node[lab, red!70!black] at (2.4,0.35) {connectivity trap, soft energy only: $-1.965$};
 \draw[lvl, orange!80!black] (0.3,3.6) -- (2.3,3.6); \node[lab] at (2.4,3.6) {best degree/budget violator: $+97.475$};
-\draw[lvl, red!70!black] (0.3,5.6) -- (2.3,5.6); \node[lab] at (2.4,5.6) {same trap with flow penalty: $>+498$};
+\draw[lvl, red!70!black] (0.3,5.6) -- (2.3,5.6); \node[lab] at (2.4,5.6) {trap after the flow penalty is added: $>+498$};
 \draw[-{Stealth}, red!70!black] (1.3,0.45) -- (1.3,5.5);
 \draw[decorate, decoration={brace, amplitude=5pt, mirror}] (-0.15,3.6) -- (-0.15,1.0) node[midway, left=6pt, font=\small, align=right] {barrier\\$99.2$};
 \end{tikzpicture}
-\caption[Energy ladder of the worked example.]{Energy ladder of the worked example. The connectivity trap looks
-better than the optimum to a pruner that ignores connectivity; the flow
-penalty lifts it far above every feasible subset.}
+\caption[Energy ladder of the worked example.]{Energy ladder of the worked example. If connectivity is ignored,
+the trap seems better than the optimum. Once the flow penalty is included, it
+ends up far above all of the feasible subsets.}
 \label{fig:qubo:ladder}
 \end{figure}
 
-\subsubsection{Cross-checks} The Q-matrix energy of the optimum, computed as
-$z^{\top}Qz+\mathrm{const}$ on the feasible bit vector, equals $-1.750$ and
-matches enumeration. The production annealer of Chapter~\ref{ch:solvers}
-returns the same four edges with no violations, and the exact MILP of
-Chapter~\ref{ch:exact} reaches the same soft energy. Three independent
-routes agree on one answer.
+\subsubsection{Cross-checks} We also computed the optimum's energy from the
+matrix, as $z^{\top}Qz+\mathrm{const}$ on the feasible bit vector. It comes
+out at $-1.750$, the same as enumeration. The production annealer of
+Chapter~\ref{ch:solvers} finds the same four edges without any violation, and
+the exact MILP of Chapter~\ref{ch:exact} reaches the same soft energy, so all
+three methods give the same answer.
 
 \section{Verification of the Encoding}
 \label{sec:qubo:verify}
 
-Two further checks were run on random instances.
+We ran two more checks, this time on randomly generated instances.
 
 \begin{enumerate}[label=\arabic*.]
-\item \textbf{Exhaustive optimum check.} Over 38 randomly generated
-instances, the exact bit-level optimum of Eq.~\eqref{eq:qubo:energy} never
-contains a violated constraint, as the dominance argument predicts.
-\item \textbf{Independent re-derivation.} The energy was re-derived from the
-specification by separate code that evaluates every term directly, without
-building $Q$. On 40 instances with 8 random states each, the matrix energy
-agrees with the independent evaluation to within $2.3\times10^{-10}$.
+\item \textbf{Exhaustive optimum check.} On 38 random instances we found the
+exact bit-level optimum of Eq.~\eqref{eq:qubo:energy}. In none of them did the
+optimum break a constraint, which is what the dominance argument says should
+happen.
+\item \textbf{Independent re-derivation.} A second piece of code computes the
+energy straight from the specification, term by term, without building $Q$.
+We compared the two on 40 instances with 8 random states each, and the matrix
+energy matched this independent value to within $2.3\times10^{-10}$.
 \end{enumerate}
 
-This is strong empirical validation of the implementation, not a formal
-proof, and it is reported as such. It does, however, settle the attribution
-question that dominates the next chapter: when a solver later returns a poor
-answer, the fault lies with the solver and not with the encoding.
+These checks give strong empirical support that the implementation is right,
+but they are not a formal proof. What they do settle is a question that comes
+up again and again in the next chapter: if a solver later returns a poor
+answer, the solver is to blame and not the encoding.
 
 \section{Problem Size}
 

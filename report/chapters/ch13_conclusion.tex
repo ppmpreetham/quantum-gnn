@@ -10,25 +10,27 @@ pipeline, and it delivered something more valuable than the pipeline alone:
 a careful account of what each part contributes, measured against the
 strongest alternatives available.
 
-On the optimisation side, the QUBO encoding was derived cleanly, validated
-against an independent re-derivation and exhaustive enumeration, and shown
-on a five-rover example to reject, by construction, the connectivity traps
-that a soft-score pruner would fall into. The solver audit then showed that
-correctness of the encoding is not enough: four serious annealing-family
-samplers solve only 48 to 64\% of verifiable instances, because the penalty
-walls that make violations unprofitable also make them uncrossable. Moving
-the search onto the feasible manifold removed the barrier; the projected
-annealer is exact on every verifiable instance and within $1.4\times10^{-3}$
-of the exact optimum on every larger one. The exact MILP baseline, finally,
-is both exact and about 100 times faster, which fixes the honest role of the
-QUBO as an encoding for quantum hardware rather than the best classical
-solver.
+For the optimisation part, we derived the QUBO encoding and checked it
+against an independent re-derivation and against exhaustive enumeration. A
+five-rover example showed that, because of how it is built, the encoding
+rejects the connectivity traps that a pruner using only soft scores would
+fall into. The solver audit then showed that a correct encoding is not
+enough on its own. Four well-known annealing-type samplers found the exact
+optimum on only 48 to 64\% of the instances we could verify. The penalty
+walls that make a violation unprofitable also make it very hard for these
+samplers to cross from one feasible state to another. Once the search was
+restricted to feasible states, this barrier disappeared. The projected
+annealer is exact on all of the verifiable instances and stays within
+$1.4\times10^{-3}$ of the exact optimum on all of the larger ones. Last, the
+exact MILP baseline is exact as well and about 100 times faster. For this
+reason we see the QUBO as an encoding for quantum hardware and not as the
+best way to solve the problem on a classical computer.
 
-On the learning side, trust-aware assignment improves mission success by
-8.1 points over a trust-only baseline, with a confidence interval that
-excludes zero, and by 13.8 points over random assignment, in a simulator
-where success depends causally on both the assignment and the pruned
-topology. Message passing adds a small margin that is not yet significant,
+For the learning part, trust-aware assignment raises mission success by 8.1
+points compared with a trust-only baseline, and the confidence interval for
+this gain does not include zero. Against random assignment the gain is 13.8
+points. These results come from a simulator in which success depends causally
+on both the assignment and the pruned topology. Message passing adds a small margin that is not yet significant,
 and a cloud-trained readout did not beat the fixed weights on the data
 available.
 
@@ -42,20 +44,20 @@ statistically annotated.
 \section{Key Take-Aways}
 
 \begin{enumerate}[label=\arabic*.]
-\item \textbf{A correct QUBO can still be unsolvable by bit-level annealers.}
-Solver output must be checked against exact ground truth before any
-conclusion is drawn about a formulation.
+\item \textbf{Bit-level annealers may fail even on a correct QUBO.} Before
+drawing any conclusion about a formulation, the solver's answers should be
+compared with an exact solution.
 \item \textbf{On classical hardware, solve the constrained problem directly.}
-The MILP is exact and two orders of magnitude faster; the QUBO earns its place
-only as a hardware-target encoding.
-\item \textbf{Guarantees have a price.} The constrained pruner is the only
-arm with zero violations, but it costs 2 to 4 points of raw success at ten
-rovers, and no pressure level in our sweep turned the guarantee into a success
-advantage. It is the right choice when violating a constraint is
-disqualifying.
-\item \textbf{Trust is where the assignment gain comes from.} The trust
-model, gates and delivery awareness account for most of the improvement;
-message passing adds a little.
+The MILP gives the exact answer and is two orders of magnitude faster. The
+QUBO is only worth using as an input format for annealing hardware.
+\item \textbf{The guarantees are not free.} The constrained pruner is the only
+arm that never breaks a constraint, but at ten rovers it loses 2 to 4 points
+of raw success, and none of the pressure levels in our sweep turned the
+guarantee into higher success. It makes sense to use it when breaking a
+constraint is not acceptable at all.
+\item \textbf{Most of the assignment gain comes from trust.} The trust model,
+the gates and delivery awareness give most of the improvement, and message
+passing adds only a small amount on top.
 \item \textbf{Audit the audit.} Logging which constraints were actually
 enforced exposed a silently relaxed budget in the project's own earlier
 results, and changed its headline table.
@@ -86,22 +88,23 @@ Objective & Outcome \\
 \end{tabularx}
 \end{table}
 
-The project also distinguishes clearly between what it built and what it
-used. The QUBO formulation, its verification, the projected annealer, the
-causal simulator, the evaluation protocol, the planner node, the planner
-service and the 3D engine were built in this project. The samplers, the CBC
+It is also worth being clear about what we built ourselves and what we
+used from others. We built the QUBO formulation and its verification, the
+projected annealer, the causal simulator, the evaluation protocol, the
+planner node, the planner service and the 3D engine. The samplers, the CBC
 solver, Gazebo, ROS~2 and the rendering libraries were used as published.
 
 \section{Benefits}
 
-The work offers three benefits beyond its own pipeline. A reusable
-evaluation discipline: exact referees, repaired baselines, causal metrics,
-paired statistics and relaxation bookkeeping apply to any QUBO-based graph
-method. A ready hardware experiment: the exported Q matrices, with their
-certified optima, are a benchmark on which quantum annealers can be compared
-fairly. And a teaching and demonstration tool: the 3D engine makes constrained
-optimisation, trust learning and their trade-offs visible to people who will
-never read the tables.
+Apart from the pipeline itself, the work is useful in three ways. The first
+is the way it evaluates things: exact referees, repaired baselines, causal
+metrics, paired statistics and a record of which constraints were relaxed can
+be reused for any QUBO-based graph method. The second is a hardware experiment
+that is ready to run, because the exported Q matrices and their certified
+optima form a benchmark on which quantum annealers can be compared fairly. The
+third is a tool for teaching and demonstrations, since the 3D
+engine lets people see constrained optimisation, trust learning and the
+trade-offs between them without having to read through tables of numbers.
 
 \section{Future Work}
 
@@ -111,14 +114,16 @@ planner node, using the controller of the 3D engine, so that the candidate
 graph changes in the physics simulation as it does in the browser.
 \item \textbf{Physical validation.} Build the four-rover ESP32 testbed and
 replace the synthetic reliability and radio models with measured ones.
-\item \textbf{Quantum annealing hardware.} Run the exported Q matrices on a
-quantum annealer and compare against the certified optima, testing whether
-transverse-field dynamics fare better against the penalty barrier.
+\item \textbf{Quantum annealing hardware.} The exported Q matrices could be
+run on a real quantum annealer and the results compared with the certified
+optima. This would show whether transverse-field dynamics handle the penalty
+barrier better than the classical samplers did.
 \item \textbf{Delivery-aware utility.} The pruner's utility ranks links by
 their own quality and misses links that delivery depends on; adding
 path-criticality to the objective addresses the 0.67 recall directly.
-\item \textbf{Scalable encodings.} Replace the dense matrix and the flow
-family with a sparse or hierarchical encoding to reach hundreds of rovers.
+\item \textbf{Scalable encodings.} To handle hundreds of rovers, the dense
+matrix and the flow variables would need to be replaced by a sparse or
+hierarchical encoding.
 \item \textbf{Richer trust and on-policy training.} Contextual trust
 estimates and a larger exploration budget for training the readout.
 \item \textbf{Statistical power.} More seeds and scenarios to resolve the
