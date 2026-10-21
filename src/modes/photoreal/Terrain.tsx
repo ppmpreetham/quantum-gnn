@@ -1,6 +1,6 @@
 import { use, useEffect, useMemo } from 'react'
 import * as THREE from 'three'
-import { TERRAIN_RADIUS, terrainHeight } from './terrain'
+import { TERRAIN_RADIUS, terrainHeight } from './terrainField'
 import { createTerrainMaterial } from './terrainMaterial'
 import type { GroundTextures } from './terrainMaterial'
 import { useLibrary } from './library'

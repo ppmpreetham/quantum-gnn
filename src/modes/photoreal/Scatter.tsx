@@ -2,8 +2,8 @@ import { use, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
 import * as THREE from 'three'
 import { bakedGeometry, meshesByName } from './gltfGeometry'
 import { useLibrary } from './library'
-import { scatter } from './terrain'
-import type { ScatterSpec } from './terrain'
+import { scatter } from './terrainField'
+import type { ScatterSpec } from './terrainField'
 
 /**
  * Placement per prop. near: props closer than this (metres) use the detailed

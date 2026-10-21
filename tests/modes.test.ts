@@ -8,7 +8,7 @@ import { DEFAULT_MODE, MODES, hashForMode, isModeId, modeFromHash } from '../src
 import { equirectDirection, findSun, measureSun, rotateY, solarPosition, sunDirection } from '../src/modes/photoreal/environment.ts'
 import type { PixelSampler, Vec3 } from '../src/modes/photoreal/environment.ts'
 import { validateManifest } from '../src/modes/photoreal/manifest.ts'
-import { FLAT_RADIUS, scatter, terrainHeight } from '../src/modes/photoreal/terrain.ts'
+import { FLAT_RADIUS, scatter, terrainHeight } from '../src/modes/photoreal/terrainField.ts'
 import { compareCycle } from '../src/modes/showcase/compare.ts'
 import { SCENARIOS, faultsAt, positionAt, traceVerdict } from '../src/modes/showcase/scenarios.ts'
 import type { AssignmentSummary, SolverSummary } from '../src/modes/showcase/scenarios.ts'
