@@ -5,10 +5,11 @@ import * as THREE from 'three'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 import { ARENA } from '../config/fleet'
 import { dampFactor } from '../core/math'
-import { useFleet } from '../state/fleetContext'
+import { useScene } from '../state/fleetContext'
 import { useConsole } from '../state/store'
 
-const HOME = { position: new THREE.Vector3(9.6, 8.4, 10.8), target: new THREE.Vector3(0, 0, 0) }
+export interface CameraHome { position: THREE.Vector3; target: THREE.Vector3 }
+const HOME: CameraHome = { position: new THREE.Vector3(9.6, 8.4, 10.8), target: new THREE.Vector3(0, 0, 0) }
 const TOP = { position: new THREE.Vector3(0, 19.5, 0.01), target: new THREE.Vector3(0, 0, 0) }
 const FOLLOW_OFFSET = new THREE.Vector3(-3.2, 3.1, 3.8)
 const CORNERS = [[-1, -1], [1, -1], [1, 1], [-1, 1]] as const
@@ -19,11 +20,19 @@ const MAX_TARGET_RADIUS = ARENA.radius + 2
  * glide with frame-rate independent damping; touching the controls cancels
  * the glide so the user is never fought for the camera.
  */
-export function CameraRig() {
+export interface CameraRigProps {
+  /** Where the orbit view returns to. */
+  home?: CameraHome
+  minDistance?: number
+  /** Slow turntable orbit for unattended demos. */
+  autoRotate?: boolean
+}
+
+export function CameraRig({ home = HOME, minDistance = 2.2, autoRotate = false }: CameraRigProps) {
   const controls = useRef<OrbitControlsImpl>(null)
   const camera = useThree(s => s.camera)
   const invalidate = useThree(s => s.invalidate)
-  const { poses, bus } = useFleet()
+  const { poses, bus } = useScene()
   const mode = useConsole(s => s.camera)
   const nonce = useConsole(s => s.cameraNonce)
   const selected = useConsole(s => s.selected)
@@ -35,11 +44,11 @@ export function CameraRig() {
   }), [])
 
   useEffect(() => {
-    if (mode === 'orbit') glide.current = { position: HOME.position.clone(), target: HOME.target.clone() }
+    if (mode === 'orbit') glide.current = { position: home.position.clone(), target: home.target.clone() }
     else if (mode === 'top') glide.current = { position: TOP.position.clone(), target: TOP.target.clone() }
     else glide.current = null
     invalidate()
-  }, [mode, nonce, invalidate])
+  }, [mode, nonce, invalidate, home])
 
   useEffect(() => {
     const i = Math.min(selected, poses.count - 1)
@@ -129,7 +138,8 @@ export function CameraRig() {
 
   return (
     <OrbitControls ref={controls} makeDefault enableDamping dampingFactor={0.1}
-      minDistance={2.2} maxDistance={34} maxPolarAngle={Math.PI / 2 - 0.06}
+      minDistance={minDistance} maxDistance={34} maxPolarAngle={Math.PI / 2 - 0.06}
+      autoRotate={autoRotate && mode === 'orbit'} autoRotateSpeed={0.35}
       enableRotate={mode !== 'chase'} enablePan={mode === 'orbit' || mode === 'top'} />
   )
 }

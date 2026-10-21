@@ -26,13 +26,37 @@ export function trustColor(trust: number, out: THREE.Color): THREE.Color {
 
 export const trustCss = (trust: number) => `#${trustColor(trust, new THREE.Color()).getHexString()}`
 
-/** Shared GLSL for the custom shaders: the same linear fog THREE.Fog applies to standard materials. */
+/**
+ * Shared GLSL for the custom shaders: linear fog like THREE.Fog, or
+ * exponential-squared fog like THREE.FogExp2 when uFogDensity > 0.
+ */
 export const FOG_GLSL = /* glsl */ `
 uniform vec3 uFogColor;
 uniform vec2 uFogRange;
-float fogFactor(float depth) { return clamp((depth - uFogRange.x) / (uFogRange.y - uFogRange.x), 0.0, 1.0); }
+uniform float uFogDensity;
+float fogFactor(float depth) {
+  if (uFogDensity > 0.0) return 1.0 - exp(-uFogDensity * uFogDensity * depth * depth);
+  return clamp((depth - uFogRange.x) / (uFogRange.y - uFogRange.x), 0.0, 1.0);
+}
 `
 export const fogUniforms = () => ({
   uFogColor: { value: new THREE.Color(SCENE.horizon) },
   uFogRange: { value: new THREE.Vector2(SCENE.fogNear, SCENE.fogFar) },
+  uFogDensity: { value: 0 },
 })
+type FogUniforms = ReturnType<typeof fogUniforms>
+
+/** Copies the scene's fog into a custom shader's fog uniforms, so every mode's atmosphere reaches them. */
+export function syncFog(uniforms: FogUniforms, fog: THREE.Fog | THREE.FogExp2 | null): void {
+  if (fog instanceof THREE.FogExp2) {
+    uniforms.uFogColor.value.copy(fog.color)
+    uniforms.uFogDensity.value = fog.density
+  } else if (fog instanceof THREE.Fog) {
+    uniforms.uFogColor.value.copy(fog.color)
+    uniforms.uFogRange.value.set(fog.near, fog.far)
+    uniforms.uFogDensity.value = 0
+  } else {
+    uniforms.uFogRange.value.set(1e6, 2e6)
+    uniforms.uFogDensity.value = 0
+  }
+}

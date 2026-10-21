@@ -16,7 +16,7 @@ sys.path[:0] = [str(ROOT), str(ROOT / "web")]
 
 from fleet_session import (  # noqa: E402
     CONFIG, PlannerSession, SessionStore, min_spanning_cost, validate_comparison,
-    validate_faults, validate_params, validate_positions,
+    validate_faults, validate_params, validate_positions, validate_tasks,
 )
 import server  # noqa: E402
 
@@ -63,6 +63,61 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(validate_comparison("assign:random"), "assign:random")
         with self.assertRaises(ValueError):
             validate_comparison("milp")
+
+
+class TaskPlacementTests(unittest.TestCase):
+    def test_absent_tasks_keep_planner_drawn_tasks(self):
+        self.assertIsNone(validate_tasks(None, 4))
+        self.assertEqual(validate_tasks([], 4), [])
+
+    def test_valid_tasks_are_normalised(self):
+        tasks = validate_tasks([{"id": "user-1", "x": 1, "z": -2.5}, {"id": "b_2", "x": 0.0, "z": 0.0}], 4)
+        self.assertEqual(tasks, [("user-1", 1.0, -2.5), ("b_2", 0.0, 0.0)])
+
+    def test_rejects_bad_tasks(self):
+        bad = [
+            "nope", {"id": "a", "x": 0, "z": 0},
+            [{"id": "a", "x": 0, "z": 0}] * 2,
+            [{"id": "", "x": 0, "z": 0}], [{"id": "has space", "x": 0, "z": 0}], [{"id": 3, "x": 0, "z": 0}],
+            [{"id": "x" * 33, "x": 0, "z": 0}],
+            [{"id": "a", "x": 50, "z": 0}], [{"id": "a", "x": float("nan"), "z": 0}],
+            [{"id": "a", "x": True, "z": 0}], [{"id": "a", "x": "1", "z": 0}], [{"id": "a", "z": 0}],
+            ["string"], [{"id": f"t{k}", "x": 0, "z": 0} for k in range(5)],
+        ]
+        for raw in bad:
+            with self.assertRaises(ValueError, msg=repr(raw)[:60]):
+                validate_tasks(raw, 4)
+
+    def test_user_tasks_are_assigned_by_the_pipeline_and_keep_their_sites(self):
+        session = PlannerSession(params(roverCount=6))
+        result = session.step(ring(6, 2.4), [], "assign:random", [("u-1", 1.0, 2.0), ("u-2", -3.0, 0.5)])
+        self.assertEqual(result["metrics"]["cycleTasks"] + len(result["unassigned"]), 2)
+        for task in result["tasks"]:
+            self.assertIn(task["id"], {"u-1", "u-2"})
+            self.assertEqual(task["site"], {"u-1": [1.0, 2.0], "u-2": [-3.0, 0.5]}[task["id"]])
+        assigned = {t["id"]: t["rover"] for t in result["tasks"]}
+        for rover in result["rovers"]:
+            if rover["task"] is not None:
+                self.assertEqual(assigned[rover["task"]], rover["index"])
+        # the paired baselines see the same user tasks
+        for tally in result["assignmentBaselines"].values():
+            self.assertTrue({t["id"] for t in tally["outcomes"]} <= {"u-1", "u-2"})
+            self.assertEqual(len(tally["trust"]), 6)
+        json.dumps(result, allow_nan=False)
+
+    def test_an_empty_task_list_dispatches_nothing_and_random_mode_is_unchanged(self):
+        session = PlannerSession(params(roverCount=5))
+        result = session.step(ring(5, 2.0), [], "none", [])
+        self.assertEqual((result["tasks"], result["unassigned"], result["metrics"]["cycleTasks"]), ([], [], 0))
+        drawn = PlannerSession(params(roverCount=5)).step(ring(5, 2.0), [], "none")
+        replay = PlannerSession(params(roverCount=5)).step(ring(5, 2.0), [], "none", None)
+        self.assertEqual(drawn["tasks"], replay["tasks"])
+        self.assertTrue(all(t["id"].startswith("task-") and "site" not in t for t in drawn["tasks"]))
+
+    def test_tasks_no_rover_can_take_are_reported(self):
+        session = PlannerSession(params(roverCount=4, communicationRange=1.5))
+        result = session.step(ring(4, 5.0), [], "none", [("lonely", 0.0, 0.0)])
+        self.assertEqual(result["unassigned"], ["lonely"])
 
 
 class SessionTests(unittest.TestCase):
@@ -164,6 +219,15 @@ class SessionTests(unittest.TestCase):
         tol = 1e-9 * max(1.0, abs(latest["oursEnergy"]))
         self.assertEqual(latest["matched"], latest["feasible"] and latest["energy"] <= latest["oursEnergy"] + tol)
         self.assertEqual(solver["totals"]["runs"], 1)
+        # the sampler's own edge set and the constraints it breaks, for the showcase
+        candidates = {(e["from"], e["to"]) for e in result["edges"]}
+        self.assertTrue(all(tuple(e) in candidates for e in latest["edges"]))
+        report = latest["violations"]
+        self.assertEqual(set(report), {"overCap", "unreachable", "cost", "budget"})
+        if latest["feasible"]:
+            self.assertEqual((report["overCap"], report["unreachable"]), ([], []))
+        kept = [(e["from"], e["to"]) for e in result["edges"] if e["active"]]
+        self.assertGreaterEqual(latest["oursCost"], len(kept))
 
     def test_min_spanning_cost_is_a_tree_lower_bound(self):
         session = PlannerSession(params(roverCount=6))
@@ -211,6 +275,15 @@ class HttpTests(unittest.TestCase):
         body["sessionId"] = result["sessionId"]
         status, again = self.post(json.dumps(body).encode())
         self.assertEqual((status, again["sessionId"], again["cycle"]), (200, result["sessionId"], 2))
+
+    def test_rejects_malformed_tasks(self):
+        body = {"params": params(roverCount=4), "positions": ring(4, 1.8), "comparison": "none", "faults": []}
+        for tasks in ({"id": "a"}, [{"id": "a", "x": 99, "z": 0}], [{"id": "bad id", "x": 0, "z": 0}]):
+            status, result = self.post(json.dumps({**body, "tasks": tasks}).encode())
+            self.assertEqual(status, 400, result)
+        status, result = self.post(json.dumps({**body, "tasks": [{"id": "user-1", "x": 0.5, "z": 0.5}]}).encode())
+        self.assertEqual(status, 200, result)
+        self.assertEqual(len(result["tasks"]) + len(result["unassigned"]), 1)
 
     def test_rejects_malformed_requests(self):
         self.assertEqual(self.post(b"{not json")[0], 400)

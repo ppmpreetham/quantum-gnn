@@ -1,5 +1,6 @@
 import type { ArenaSpec } from '../config/fleet.ts'
 import { drivableRadius, patrolRadius, pointInDisc, spawnLayout, taskSite } from './arena.ts'
+import type { FleetView } from './fleetView.ts'
 import { pairIndex, reachableCount, widestPathTree } from './graph.ts'
 import type { Link } from './graph.ts'
 import { approach, integratePose, saturateTwist } from './kinematics.ts'
@@ -27,8 +28,15 @@ export interface PlannerRover {
   reliability: number; pathFactor: number; task: string | null
 }
 export interface PlannerEdge { from: number; to: number; active: boolean; quality: number; utility: number }
-export interface PlannerTask { id: string; rover: number; executed: boolean; delivered: boolean; success: boolean; explored: boolean }
-export interface PlanUpdate { cycle: number; rovers: PlannerRover[]; edges: PlannerEdge[]; tasks: PlannerTask[] }
+/** site is set for tasks placed on the map by the user; planner-generated tasks get a stable hashed site. */
+export interface PlannerTask {
+  id: string; rover: number; executed: boolean; delivered: boolean; success: boolean; explored: boolean
+  site?: [number, number]
+}
+export interface PlanUpdate {
+  cycle: number; rovers: PlannerRover[]; edges: PlannerEdge[]; tasks: PlannerTask[]
+  faults?: { rover: number | null }[]
+}
 
 export interface Beacon {
   id: string; rover: number; x: number; z: number
@@ -39,6 +47,16 @@ export interface EngineOptions { count: number; seed: number; range: number; cru
 
 const finite = (value: unknown, fallback: number) => (typeof value === 'number' && Number.isFinite(value) ? value : fallback)
 
+const isIndex = (i: unknown, n: number): i is number => Number.isInteger(i) && (i as number) >= 0 && (i as number) < n
+
+/** A user-placed site from the planner, if it is a finite point inside the arena. */
+function userSite(site: unknown, arena: ArenaSpec): { x: number; z: number } | null {
+  if (!Array.isArray(site) || site.length !== 2) return null
+  const [x, z] = site
+  if (typeof x !== 'number' || typeof z !== 'number' || !Number.isFinite(x) || !Number.isFinite(z)) return null
+  return Math.hypot(x, z) <= arena.radius ? { x, z } : null
+}
+
 /**
  * Fixed-step kinematic fleet. Each tick commits rovers one at a time and only
  * accepts a translation that keeps every pair at least two body radii apart
@@ -47,7 +65,7 @@ const finite = (value: unknown, fallback: number) => (typeof value === 'number' 
  * d_ij >= min(2R, previous d_ij): footprints that start apart never overlap.
  * A rejected rover still rotates in place, which cannot move its centre.
  */
-export class FleetEngine {
+export class FleetEngine implements FleetView {
   readonly count: number
   readonly seed: number
   readonly x: Float64Array; readonly z: Float64Array; readonly yaw: Float64Array
@@ -62,6 +80,7 @@ export class FleetEngine {
   readonly task: (string | null)[]
   readonly planState: Uint8Array
   readonly planQuality: Float32Array
+  readonly faulted: Uint8Array
   parent: Int32Array
   links: Link[] = []
   beacons: Beacon[] = []
@@ -117,6 +136,7 @@ export class FleetEngine {
     this.activity = Array<RoverActivity>(n).fill('driving')
     this.planState = new Uint8Array(n * n)
     this.planQuality = new Float32Array(n * n)
+    this.faulted = new Uint8Array(n)
     this.parent = new Int32Array(n).fill(-1)
     this.rngs = Array.from({ length: n }, (_, i) => createRng(options.seed * 104729 + i * 7907 + 1))
     spawnLayout(n, options.seed, options.range, arena).forEach((p, i) => {
@@ -179,7 +199,7 @@ export class FleetEngine {
     this.cycle = finite(plan.cycle, this.cycle)
     for (const r of plan.rovers ?? []) {
       const i = r.index
-      if (!Number.isInteger(i) || i < 0 || i >= n) continue
+      if (!isIndex(i, n)) continue
       this.trust[i] = clamp(finite(r.trust, this.trust[i]), 0, 1)
       this.battery[i] = clamp(finite(r.battery, this.battery[i]), 0, 1)
       this.compute[i] = clamp(finite(r.compute, this.compute[i]), 0, 1)
@@ -201,6 +221,8 @@ export class FleetEngine {
     }
     this.links = links
     this.parent = widestPathTree(n, 0, links).parent
+    this.faulted.fill(0)
+    for (const { rover } of plan.faults ?? []) if (isIndex(rover, n)) this.faulted[rover] = 1
     for (const t of plan.tasks ?? []) this.dispatch(t)
     this.planVersion++
   }
@@ -229,10 +251,10 @@ export class FleetEngine {
 
   private dispatch(t: PlannerTask): void {
     const i = t.rover
-    if (!Number.isInteger(i) || i < 0 || i >= this.count || typeof t.id !== 'string') return
+    if (!isIndex(i, this.count) || typeof t.id !== 'string') return
     // a reassigned rover abandons its old errand; that beacon resolves now
     for (const b of this.beacons) if (b.rover === i && b.state === 'enroute') this.resolve(b)
-    const site = taskSite(t.id, this.seed, this.patrol)
+    const site = userSite(t.site, this.arena) ?? taskSite(t.id, this.seed, this.patrol)
     this.beacons.push({
       id: t.id, rover: i, x: site.x, z: site.z, success: !!t.success, executed: !!t.executed,
       delivered: !!t.delivered, explored: !!t.explored, state: 'enroute', issuedAt: this.elapsed, resolvedAt: 0,

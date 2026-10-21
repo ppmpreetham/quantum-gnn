@@ -16,7 +16,7 @@ const SAMPLES = [[0.5, 0.5], [0.3, 0.35], [0.7, 0.35], [0.3, 0.65], [0.7, 0.65]]
  * here. Runs after the composer (priority 2) in the same frame, before the
  * browser clears the drawing buffer.
  */
-function BlankFrameGuard({ onBlank }: { onBlank: () => void }) {
+export function BlankFrameGuard({ onBlank }: { onBlank: () => void }) {
   const gl = useThree(s => s.gl)
   const frame = useRef(0)
   const pixel = useMemo(() => new Uint8Array(4), [])

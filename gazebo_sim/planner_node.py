@@ -24,6 +24,15 @@ from main import Edge, EdgeFeatures, EdgeSelectionQUBO, ProjectedEdgeAnnealing
 from trust_gnn import NodeFeatures, TaskRequirements, TrustGNN, TrustModel, assign_tasks
 
 
+
+# Spawn poses (x, y, yaw) of rover_0..rover_3, as in worlds/rover_world.sdf.
+SPAWN_POSES = {
+    0: (-3.0, 0.0, 0.0),
+    1: (-1.0, 0.4, 0.25),
+    2: (1.0, 0.1, -0.20),
+    3: (3.0, 0.5, 0.10),
+}
+
 class GazeboQuantumGNN(Node):
     def __init__(self, steps: int, cycle_period: float, comm_range: float) -> None:
         super().__init__("quantum_gnn_planner")
@@ -35,13 +44,10 @@ class GazeboQuantumGNN(Node):
         self.cycle = 0
         self.rng = np.random.default_rng(17)
 
-        # These are also the initial poses in rover_world.sdf.  They make the
-        # demo useful even if odometry bridge startup takes a few seconds.
+        # Start from the spawn poses so the demo works even if the odometry
+        # bridge takes a few seconds to come up.
         self.positions: Dict[int, np.ndarray] = {
-            0: np.array([-3.0, 0.0]),
-            1: np.array([-1.0, 0.4]),
-            2: np.array([1.0, 0.1]),
-            3: np.array([3.0, 0.5]),
+            n: np.array(SPAWN_POSES[n][:2]) for n in self.nodes
         }
         self.have_odom = {n: False for n in self.nodes}
         self.battery = {n: 0.95 - 0.04 * n for n in self.nodes}
@@ -67,16 +73,15 @@ class GazeboQuantumGNN(Node):
         self.timer = self.create_timer(self.cycle_period, self._run_cycle)
         self.get_logger().info(
             "Quantum-GNN planner started: %d rovers, %.1fm communication range, "
-            "%d cycles",
-            len(self.nodes),
-            self.comm_range,
-            self.steps,
+            "%d cycles" % (len(self.nodes), self.comm_range, self.steps)
         )
 
     def _odom_callback(self, node: int, msg: Odometry) -> None:
-        self.positions[node] = np.array(
-            [msg.pose.pose.position.x, msg.pose.pose.position.y], dtype=float
-        )
+        # DiffDrive odometry is relative to the spawn pose; map it to world.
+        x0, y0, yaw = SPAWN_POSES[node]
+        dx, dy = msg.pose.pose.position.x, msg.pose.pose.position.y
+        c, s = np.cos(yaw), np.sin(yaw)
+        self.positions[node] = np.array([x0 + c * dx - s * dy, y0 + s * dx + c * dy])
         self.have_odom[node] = True
 
     def _build_graph(self) -> tuple[List[Edge], Dict[Edge, EdgeFeatures]]:
@@ -155,7 +160,7 @@ class GazeboQuantumGNN(Node):
         except (RuntimeError, ValueError) as exc:
             # A disconnected or budget-infeasible physical graph should keep
             # the demo alive and be visible in the status stream.
-            self.get_logger().warning("QUBO fallback: %s", exc)
+            self.get_logger().warning("QUBO fallback: %s" % exc)
             kept = list(edges)
             mode = "keep-all-fallback"
         return kept, (time.perf_counter() - started) * 1e3, mode
@@ -163,7 +168,7 @@ class GazeboQuantumGNN(Node):
     def _run_cycle(self) -> None:
         if self.cycle >= self.steps:
             self.timer.cancel()
-            self.get_logger().info("Simulation complete after %d cycles", self.steps)
+            self.get_logger().info("Simulation complete after %d cycles" % self.steps)
             rclpy.shutdown()
             return
 
@@ -202,12 +207,8 @@ class GazeboQuantumGNN(Node):
             self.trust.update(node, 1.0 if execution_ok else 0.0)
             self.load[node] = min(0.95, self.load[node] + 0.12)
             self.get_logger().info(
-                "%s -> rover_%d | execute=%s deliver=%s mission=%s",
-                task_id,
-                node,
-                execution_ok,
-                delivery_ok,
-                mission_ok,
+                "%s -> rover_%d | execute=%s deliver=%s mission=%s"
+                % (task_id, node, execution_ok, delivery_ok, mission_ok)
             )
         for node in set(self.nodes) - set(assignment.values()):
             self.trust.relax(node)
@@ -232,13 +233,8 @@ class GazeboQuantumGNN(Node):
         assignment_msg.data = json.dumps({"cycle": self.cycle, "assignment": assignment})
         self.assignment_pub.publish(assignment_msg)
         self.get_logger().info(
-            "cycle=%d odom=%d/4 candidates=%d kept=%d mode=%s solve=%.1fms",
-            self.cycle,
-            sum(self.have_odom.values()),
-            len(edges),
-            len(kept),
-            mode,
-            solve_ms,
+            "cycle=%d odom=%d/4 candidates=%d kept=%d mode=%s solve=%.1fms"
+            % (self.cycle, sum(self.have_odom.values()), len(edges), len(kept), mode, solve_ms)
         )
         self.cycle += 1
 

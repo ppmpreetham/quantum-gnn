@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import { ARENA } from '../../config/fleet'
+import { singleLod } from './types'
 import type { RoverModel, WheelPart } from './types'
 import { createVertexPbrMaterial, mergePainted, paint } from './vertexPbr'
 
@@ -94,7 +95,7 @@ export function createSdfRover(): RoverModel {
   const triangles = [body, tyre, tyre, glow].reduce((sum, g) => sum + (g.index?.count ?? g.attributes.position.count) / 3, 0)
   return {
     name: 'Gazebo rover (SDF)', source: 'sdf',
-    body: [{ geometry: body, material }], wheels, lights: glow, triangles,
+    lods: singleLod([{ geometry: body, material }], wheels), lights: glow, triangles,
     dispose: () => { body.dispose(); tyre.dispose(); glow.dispose(); material.dispose() },
   }
 }

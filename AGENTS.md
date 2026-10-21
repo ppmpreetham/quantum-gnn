@@ -89,11 +89,16 @@ user says "make it better than other models", they mean make the
 |---|---|
 | `shared/fleet-config.json` | Param specs (scope: session/planner/client), defaults, calibrated presets, comparison catalogue + paper reference numbers. Single source for TS and Python. |
 | `web/fleet_session.py` | `LiveSimulation(RoverSimulation)` with live positions and in-place tuning; `PlannerSession` (primary + 3 paired assignment followers sharing the primary's kept edges + optional solver baseline on the same Q); `SessionStore`. |
-| `web/server.py` | stdlib HTTP: `GET /api/health`, `POST /api/step`. 400 bad input, 429 sessions full, 503 busy. |
-| `src/core/*.ts` | Pure TS, Node-testable (explicit `.ts` imports): kinematics, arena/spawn, graph (widest-path tree), `FleetEngine`, stats. |
-| `src/scene/` | R3F scene: `FleetMeshes` (instanced, vertex-PBR SDF rover or GLB), `LinkArcs` (one instanced shader draw), `GroundDecals`, `Beacons`, `CameraRig`, `Effects` tiers. |
-| `src/ui/`, `src/state/` | HUD panels, minimap, roster radars; zustand store; engine/poses/view-bus context. |
-| `tests/motion.test.ts`, `tests/test_web.py` | `npm test` runs both. |
+| `web/server.py` | stdlib HTTP: `GET /api/health`, `POST /api/step`. 400 bad input, 429 sessions full, 503 busy. Optional `tasks: [{id, x, z}]` (user-placed tasks; a list, even empty, replaces the planner's own tasks for that cycle). Port via `--port`; `npm run dev` passes `FLEET_API_PORT` (default 8765). |
+| `web/showcase_scenarios.py` | Scripted "where we win" scenarios (params, per-cycle positions, faults). Replays them through `PlannerSession`, keeps only wins, writes `shared/showcase-scenarios.json` with the measured per-cycle trace. |
+| `src/core/*.ts` | Pure TS, Node-testable (explicit `.ts` imports): kinematics, arena/spawn, graph (widest-path tree), `FleetEngine`, stats, `fleetView.ts` (the `FleetView` interface every renderer reads). |
+| `src/modes/` | `modes.ts` is the single mode registry (console, photoreal, showcase; `mission: live | scripted`); `ModeHost` lazy-loads non-default modes; live modes share one `LiveMission`. |
+| `src/modes/photoreal/` | Photoreal field site: `AssetLibrary` (GLTF + KTX2 + Meshopt, cached promises for React `use()`, disposes on exit), scanned terrain shader, instanced props, HDRI or physical sky with the sun measured from the HDRI, PCF shadows, N8AO/bloom/grain by tier, environment panel. |
+| `src/modes/showcase/` | Split-screen replay of the scenarios (two scenes, one camera, scissor), `compare.ts` turns each response into marks and a headline, `ScriptedFleet.ts` implements `FleetView` for scripted motion. |
+| `src/scene/` | R3F scene: `SceneCanvas` (tiers, perf, context loss), `FleetLayer`/`LiveRig`, `FleetMeshes` (instanced, LOD + shadow proxy), `LinkArcs`, `GroundDecals`, `Beacons`, `TaskPicker` (click to place), `CameraRig`, `Effects` tiers. |
+| `src/ui/`, `src/state/` | HUD panels, minimap, roster radars; zustand store; engine/poses/view-bus context (`SceneProvider` for renderers, `FleetProvider` for the live mission). |
+| `public/photoreal/` | 35 MB of processed CC0 / NASA assets, `manifest.json`, `CREDITS.md`. Rebuild with `scripts/photoreal-assets` (needs the KTX-Software `ktx` CLI). |
+| `tests/*.test.ts`, `tests/test_web.py`, `tests/test_showcase.py` | `npm test` runs all. `FLEET_FULL_SHOWCASE=1` replays every showcase cycle (about 2 min). |
 
 `simulation.py` gained additive, inspection-only hooks used by the console
 (on top of the upstream `degree_cap` / `budget_factor` / repair-pruner work):
@@ -101,6 +106,14 @@ an `annealer_options` kwarg (defaults reproduce restarts=2, steps=2,
 cooling=0.995), plus `last_prune`, `last_outcomes`, `last_path_factor`.
 Results are byte-identical to the version without the hooks for the same
 seeds, including the repair pruners and `budget_factor`.
+
+Modes: console (default, unchanged), photoreal (same live mission on a
+desert test site) and "where we win" (scripted replays, ours left, baseline
+right, same positions/faults/seed through the paired followers or the
+same-Q solver baseline). Showcase seeds were picked because we win on them;
+the UI says so and keeps the MILP/threshold footnote. Never hand-edit
+`shared/showcase-scenarios.json`: regenerate it with the script, and the
+tests check the replay reproduces it.
 
 Console rules: the comparison menu lists only baselines our pipeline beats
 (trust-only, random, no-graph marked not significant; bit-SA, neal, tabu,

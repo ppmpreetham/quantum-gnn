@@ -11,8 +11,17 @@ export interface PlannerMetrics {
   variables: number; energy: number | null; keptCount: number; candidateCount: number
   reachable: number; fleet: number; minSpanningCost: number | null; budget: number; degreeCap: number
 }
-export interface BaselineTally { successes: number; tasks: number; cycleSuccesses: number; cycleTasks: number }
-export interface SolverRun { feasible: boolean; energy: number; oursEnergy: number; gap: number; ms: number; matched: boolean }
+/** A follower's tallies plus its own trust estimates and this cycle's outcomes (it shares our topology, not our choices). */
+export interface BaselineTally {
+  successes: number; tasks: number; cycleSuccesses: number; cycleTasks: number
+  trust: number[]; outcomes: PlannerTask[]
+}
+/** Hard constraints an edge set breaks: [rover, degree, cap] triples, rovers cut off from the root, and its cost. */
+export interface ConstraintReport { overCap: [number, number, number][]; unreachable: number[]; cost: number; budget: number | null }
+export interface SolverRun {
+  feasible: boolean; energy: number; oursEnergy: number; gap: number; ms: number; matched: boolean
+  edges: [number, number][]; violations: ConstraintReport; oursCost: number
+}
 export interface SolverComparison {
   baseline: string; oursMs: number
   latest: SolverRun | { error: string } | null
@@ -21,10 +30,14 @@ export interface SolverComparison {
 export interface ActiveFault { kind: FaultKind; rover: number | null; remaining: number }
 export type FaultKind = 'reliability_drop' | 'battery_drain' | 'packet_loss_spike'
 export interface FaultRequest { kind: FaultKind; rover?: number }
+/** A task the user placed on the map; sent with the next cycle, which then dispatches only user tasks. */
+export interface UserTask { id: string; x: number; z: number }
 
 export interface StepResponse {
   sessionId: string; cycle: number
   rovers: PlannerRover[]; edges: PlannerEdge[]; tasks: PlannerTask[]; faults: ActiveFault[]
+  /** User task ids no rover could take this cycle. */
+  unassigned: string[]
   metrics: PlannerMetrics
   assignmentBaselines: Record<string, BaselineTally>
   solver: SolverComparison | null
@@ -32,6 +45,8 @@ export interface StepResponse {
 export interface StepRequest {
   sessionId?: string; params: Partial<FleetParams>; positions: [number, number][]
   faults: FaultRequest[]; comparison: string
+  /** Omitted: the planner draws its own tasks. A list (even empty): exactly these tasks this cycle. */
+  tasks?: UserTask[]
 }
 export interface Health { status: string; engine: string; solvers: Record<string, boolean> }
 

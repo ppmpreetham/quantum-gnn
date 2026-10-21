@@ -1,0 +1,152 @@
+{
+  "version": 1,
+  "worldScale": 0.3,
+  "rover": {
+    "file": "rover.glb",
+    "credit": "perseverance",
+    "lods": 3
+  },
+  "props": [
+    {
+      "id": "namaqualand_boulder_02",
+      "file": "props/namaqualand_boulder_02.glb",
+      "credit": "namaqualand_boulder_02",
+      "variants": 1,
+      "alpha": false
+    },
+    {
+      "id": "namaqualand_boulder_03",
+      "file": "props/namaqualand_boulder_03.glb",
+      "credit": "namaqualand_boulder_03",
+      "variants": 1,
+      "alpha": false
+    },
+    {
+      "id": "namaqualand_boulder_05",
+      "file": "props/namaqualand_boulder_05.glb",
+      "credit": "namaqualand_boulder_05",
+      "variants": 1,
+      "alpha": false
+    },
+    {
+      "id": "namaqualand_stones_01",
+      "file": "props/namaqualand_stones_01.glb",
+      "credit": "namaqualand_stones_01",
+      "variants": 3,
+      "alpha": false
+    },
+    {
+      "id": "wild_rooibos_bush",
+      "file": "props/wild_rooibos_bush.glb",
+      "credit": "wild_rooibos_bush",
+      "variants": 2,
+      "alpha": true
+    }
+  ],
+  "grounds": [
+    {
+      "id": "gravelly_sand",
+      "credit": "gravelly_sand",
+      "tileMeters": 0.744,
+      "color": "ground/gravelly_sand_color.ktx2",
+      "normal": "ground/gravelly_sand_normal.ktx2",
+      "arh": "ground/gravelly_sand_arh.ktx2"
+    },
+    {
+      "id": "sandy_gravel_02",
+      "credit": "sandy_gravel_02",
+      "tileMeters": 0.759,
+      "color": "ground/sandy_gravel_02_color.ktx2",
+      "normal": "ground/sandy_gravel_02_normal.ktx2",
+      "arh": "ground/sandy_gravel_02_arh.ktx2"
+    }
+  ],
+  "skies": [
+    {
+      "id": "goegap",
+      "label": "Midday, clear desert",
+      "file": "sky/goegap_2k.hdr",
+      "credit": "goegap"
+    },
+    {
+      "id": "rogland_sunset",
+      "label": "Low sun, clear evening",
+      "file": "sky/rogland_sunset_2k.hdr",
+      "credit": "rogland_sunset"
+    },
+    {
+      "id": "rogland_overcast",
+      "label": "Overcast, soft light",
+      "file": "sky/rogland_overcast_2k.hdr",
+      "credit": "rogland_overcast"
+    }
+  ],
+  "credits": {
+    "perseverance": {
+      "title": "Mars Perseverance Rover, 3D Model",
+      "author": "NASA/JPL-Caltech",
+      "license": "NASA media usage guidelines (not copyrighted in the US; credit NASA/JPL-Caltech)",
+      "url": "https://science.nasa.gov/resource/mars-perseverance-rover-3d-model/"
+    },
+    "goegap": {
+      "title": "Goegap HDRI",
+      "author": "Greg Zaal (Poly Haven)",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/goegap"
+    },
+    "rogland_sunset": {
+      "title": "Rogland Sunset HDRI",
+      "author": "Greg Zaal (Poly Haven)",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/rogland_sunset"
+    },
+    "rogland_overcast": {
+      "title": "Rogland Overcast HDRI",
+      "author": "Greg Zaal (Poly Haven)",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/rogland_overcast"
+    },
+    "gravelly_sand": {
+      "title": "Gravelly Sand texture",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/gravelly_sand"
+    },
+    "sandy_gravel_02": {
+      "title": "Sandy Gravel 02 texture",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/sandy_gravel_02"
+    },
+    "namaqualand_boulder_02": {
+      "title": "Namaqualand Boulder 02",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/namaqualand_boulder_02"
+    },
+    "namaqualand_boulder_03": {
+      "title": "Namaqualand Boulder 03",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/namaqualand_boulder_03"
+    },
+    "namaqualand_boulder_05": {
+      "title": "Namaqualand Boulder 05",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/namaqualand_boulder_05"
+    },
+    "namaqualand_stones_01": {
+      "title": "Namaqualand Stones 01",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/namaqualand_stones_01"
+    },
+    "wild_rooibos_bush": {
+      "title": "Wild Rooibos Bush",
+      "author": "Poly Haven",
+      "license": "CC0 1.0",
+      "url": "https://polyhaven.com/a/wild_rooibos_bush"
+    }
+  }
+}

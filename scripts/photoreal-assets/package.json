@@ -1,0 +1,16 @@
+{
+  "name": "photoreal-assets",
+  "private": true,
+  "type": "module",
+  "description": "Rebuilds public/photoreal from the original CC0 / public-domain sources. Needs the KTX-Software 'ktx' CLI on PATH (or KTX_BIN).",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@gltf-transform/core": "^4.5.1",
+    "@gltf-transform/extensions": "^4.5.1",
+    "@gltf-transform/functions": "^4.5.1",
+    "meshoptimizer": "^1.3.0",
+    "sharp": "^0.35.5"
+  }
+}

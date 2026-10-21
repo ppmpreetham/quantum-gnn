@@ -14,7 +14,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from fleet_session import (  # noqa: E402
     SessionStore, available_solvers, validate_comparison, validate_faults,
-    validate_params, validate_positions,
+    validate_params, validate_positions, validate_tasks,
 )
 
 MAX_BODY = 32768
@@ -30,10 +30,11 @@ def parse_step(data):
     positions = validate_positions(data.get("positions"), params["roverCount"])
     faults = validate_faults(data.get("faults"), params["roverCount"])
     comparison = validate_comparison(data.get("comparison", "none"))
+    tasks = validate_tasks(data.get("tasks"), params["roverCount"])
     session_id = data.get("sessionId")
     if session_id is not None and (not isinstance(session_id, str) or len(session_id) > 64):
         raise ValueError("Invalid session identifier")
-    return session_id, params, positions, faults, comparison
+    return session_id, params, positions, faults, comparison, tasks
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -72,7 +73,7 @@ class Handler(BaseHTTPRequestHandler):
                 raise ValueError(f"Request must be between 1 and {MAX_BODY} bytes")
             if self.headers.get("Content-Type", "").split(";")[0].strip() != "application/json":
                 raise ValueError("Content-Type must be application/json")
-            session_id, params, positions, faults, comparison = parse_step(
+            session_id, params, positions, faults, comparison, tasks = parse_step(
                 json.loads(self.rfile.read(length)))
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as error:
             self.respond(400, {"error": str(error)})
@@ -83,7 +84,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
             session_id, session = STORE.acquire(session_id, params, lambda: uuid.uuid4().hex)
             with session.lock:
-                result = session.step(positions, faults, comparison)
+                result = session.step(positions, faults, comparison, tasks)
             self.respond(200, {"sessionId": session_id, **result})
         except OverflowError as error:
             self.respond(429, {"error": str(error)})

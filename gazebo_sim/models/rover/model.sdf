@@ -38,8 +38,7 @@
       <right_joint>right_wheel_joint</right_joint>
       <wheel_separation>0.76</wheel_separation>
       <wheel_radius>0.16</wheel_radius>
-      <topic>cmd_vel</topic>
-      <odom_topic>odometry</odom_topic>
+      <!-- no fixed topics: each rover gets /model/<name>/cmd_vel and /model/<name>/odometry -->
       <frame_id>odom</frame_id>
       <child_frame_id>base_link</child_frame_id>
       <odom_publish_frequency>20</odom_publish_frequency>

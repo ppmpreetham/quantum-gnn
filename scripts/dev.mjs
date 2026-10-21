@@ -1,11 +1,10 @@
 import { spawn } from 'node:child_process'
 
-// Use 'uv' to execute the script in a managed environment
-const pythonCmd = 'uv'
-const pythonArgs = ['run', 'python', '-u', 'web/server.py']
+// FLEET_API_PORT moves the planner off 8765 when that port is taken; vite.config.ts proxies to the same port
+const apiPort = process.env.FLEET_API_PORT ?? '8765'
 
 const children = [
-  spawn(pythonCmd, pythonArgs, { stdio: 'inherit', shell: true }),
+  spawn('uv', ['run', 'python', '-u', 'web/server.py', '--port', apiPort], { stdio: 'inherit' }),
   spawn(process.execPath, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1'], { stdio: 'inherit' }),
 ]
 let stopping = false

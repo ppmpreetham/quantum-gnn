@@ -1,7 +1,10 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+# ROS setup scripts read unset variables, so relax -u while sourcing them
+set +u
 source /opt/ros/jazzy/setup.bash
+set -u
 export PYTHONPATH="/workspace:${PYTHONPATH:-}"
 export GZ_SIM_RESOURCE_PATH="/workspace/gazebo_sim/models:${GZ_SIM_RESOURCE_PATH:-}"
 

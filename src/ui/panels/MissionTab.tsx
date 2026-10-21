@@ -2,13 +2,14 @@ import { COMPARISONS, OMITTED_NOTE, PRESETS } from '../../config/fleet'
 import type { Comparison } from '../../config/fleet'
 import type { FaultKind } from '../../api/planner'
 import { roverId, useConsole } from '../../state/store'
-import { Select } from '../controls'
+import type { TaskPlacement } from '../../state/store'
+import { Field, Segmented, Select } from '../controls'
 import type { Option } from '../controls'
 import { FAULT_LABEL, ms } from '../format'
 
 const GROUP = { assignment: 'Task assignment', solver: 'QUBO solver', none: '' } as const
 
-function ReferenceCard({ comparison }: { comparison: Comparison }) {
+export function ReferenceCard({ comparison }: { comparison: Comparison }) {
   const ref = comparison.reference
   if (!ref) return null
   const unit = ref.metric === 'Mission success' ? '%' : '% of instances'
@@ -37,6 +38,23 @@ const FAULTS: { kind: FaultKind; targeted: boolean; detail: string }[] = [
   { kind: 'packet_loss_spike', targeted: false, detail: 'Adds 40% packet loss fleet-wide for 3 cycles, so link quality goes stale.' },
 ]
 
+const PLACEMENT: { value: TaskPlacement; label: string; title: string }[] = [
+  { value: 'random', label: 'Random', title: 'The planner draws its own tasks every cycle' },
+  { value: 'click', label: 'Click to place', title: 'Tasks appear only where you click on the ground' },
+]
+
+function TaskPlacementField() {
+  const placement = useConsole(s => s.taskPlacement)
+  const setPlacement = useConsole(s => s.setTaskPlacement)
+  return (
+    <Field label="Task placement" hint={placement === 'click'
+      ? 'Click the ground to drop a task. It goes out with the next planning cycle, and the real pipeline picks the rover by trust, resources and route to the root; the model has no travel-distance term, so it need not be the nearest rover.'
+      : 'The planner draws tasks each cycle at stable map sites. Switch to click to place them yourself.'}>
+      <Segmented label="Task placement" value={placement} options={PLACEMENT} onChange={setPlacement} />
+    </Field>
+  )
+}
+
 export function MissionTab() {
   const presetId = useConsole(s => s.presetId)
   const applyPreset = useConsole(s => s.applyPreset)
@@ -63,6 +81,8 @@ export function MissionTab() {
     <div className="tab-body">
       <Select label="Preset" value={presetId ?? ''} options={presetOptions} onChange={applyPreset}
         hint={preset ? <>{preset.description} Measured planning time about {ms(preset.measuredCycleMs)} per cycle.</> : 'You changed a setting. Pick a preset to start over.'} />
+
+      <TaskPlacementField />
 
       <Select label="Compare our pipeline against" value={comparison} options={comparisonOptions} onChange={setComparison}
         hint={current.summary ?? 'Pick a baseline to run it side by side with the live mission.'} />

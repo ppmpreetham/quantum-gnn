@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFrame, useThree } from '@react-three/fiber'
 import * as THREE from 'three'
-import { useFleet } from '../state/fleetContext'
+import { useScene } from '../state/fleetContext'
 import { useConsole } from '../state/store'
 import type { Tier } from '../state/store'
 
 /** Advances the fleet and interpolates poses once per frame, before anything draws. */
 export function FleetDriver() {
-  const { engine, poses } = useFleet()
+  const { view, poses } = useScene()
   useFrame((_, delta) => {
-    if (!useConsole.getState().paused) engine.advance(delta)
-    poses.update(engine)
+    if (!useConsole.getState().paused) view.advance(delta)
+    poses.update(view)
   }, -3)
   return null
 }
 
 /** Places the DOM labels over their rovers by writing transforms only (no React renders). */
 export function LabelProjector() {
-  const { poses, bus } = useFleet()
+  const { poses, bus } = useScene()
   const size = useThree(s => s.size)
   const point = useMemo(() => new THREE.Vector3(), [])
   useFrame(({ camera }) => {

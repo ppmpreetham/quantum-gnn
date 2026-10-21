@@ -9,25 +9,26 @@
     "preview": "vite preview",
     "dev:client": "vite",
     "dev:api": "python3 -u web/server.py",
-    "test": "node --test tests/motion.test.ts && python3 -m unittest discover -s tests -p 'test_*.py'",
+    "test": "node --test tests/*.test.ts && python3 -m unittest discover -s tests -p 'test_*.py'",
     "typecheck": "tsc -b"
   },
   "dependencies": {
-    "@react-three/drei": "^9.122.0",
-    "@react-three/fiber": "^8.17.10",
-    "@react-three/postprocessing": "^2.16.3",
-    "postprocessing": "^6.36.6",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "three": "^0.171.0",
+    "@react-three/drei": "^10.7.9",
+    "@react-three/fiber": "^9.8.2",
+    "@react-three/postprocessing": "^3.2.1",
+    "postprocessing": "^6.39.5",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "three": "^0.186.1",
     "zustand": "^5.0.15"
   },
   "devDependencies": {
-    "@types/react": "^18.3.12",
-    "@types/react-dom": "^18.3.1",
-    "@types/three": "^0.171.0",
-    "@vitejs/plugin-react": "^4.3.4",
-    "typescript": "^5.7.2",
-    "vite": "^6.0.3"
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/three": "^0.186.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
   }
 }

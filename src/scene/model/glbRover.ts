@@ -3,6 +3,7 @@ import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js'
 import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { ARENA } from '../../config/fleet'
+import { singleLod } from './types'
 import type { BodyPart, ForwardAxis, RoverModel, WheelPart } from './types'
 
 const MAX_BYTES = 24 * 1024 * 1024
@@ -120,7 +121,7 @@ export async function loadGlbRover(file: File, forward: ForwardAxis): Promise<Ro
   const textures = new Set<THREE.Texture>()
   owned.forEach(m => Object.values(m).forEach(v => { if (v instanceof THREE.Texture) textures.add(v) }))
   return {
-    name: file.name, source: 'glb', body, wheels, lights, triangles,
+    name: file.name, source: 'glb', lods: singleLod(body, wheels), lights, triangles,
     dispose: () => {
       body.forEach(p => p.geometry.dispose())
       wheels.forEach(p => p.geometry.dispose())

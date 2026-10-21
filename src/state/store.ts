@@ -1,8 +1,10 @@
 import { create } from 'zustand'
 import { COMPARISONS, DEFAULT_PARAMS, PRESETS, sanitizeParams, snapParam } from '../config/fleet'
 import type { FleetParams, ParamKey } from '../config/fleet'
-import type { ActiveFault, FaultRequest, PlannerMetrics, PruneMode, SolverComparison, SolverRun, StepResponse } from '../api/planner'
+import type { ActiveFault, FaultRequest, PlannerMetrics, PruneMode, SolverComparison, SolverRun, StepResponse, UserTask } from '../api/planner'
 import type { RoverActivity } from '../core/fleet'
+import { initialMode } from '../modes/modes'
+import type { ModeId } from '../modes/modes'
 
 export type CameraMode = 'orbit' | 'top' | 'follow' | 'chase'
 export type QualityMode = 'auto' | 'high' | 'balanced' | 'low'
@@ -10,6 +12,8 @@ export type Tier = 'high' | 'balanced' | 'low'
 export type OverlayKey = 'labels' | 'candidates' | 'ranges' | 'flow' | 'beacons' | 'path'
 export type Overlays = Record<OverlayKey, boolean>
 export type PlannerState = 'connecting' | 'online' | 'offline' | 'paused'
+/** Random: the planner draws tasks each cycle. Click: tasks exist only where the user puts them. */
+export type TaskPlacement = 'random' | 'click'
 
 export interface CycleRecord {
   cycle: number
@@ -30,9 +34,16 @@ export interface Telemetry {
 export interface Perf { fps: number; calls: number; triangles: number; tier: Tier }
 
 const HISTORY = 240
+/** Queued user tasks beyond this are refused, so a burst of clicks cannot flood the planner. */
+export const MAX_QUEUED_TASKS = 8
 export const roverId = (i: number) => `RV-${String(i + 1).padStart(2, '0')}`
 
 interface ConsoleState {
+  mode: ModeId
+  taskPlacement: TaskPlacement
+  pendingTasks: UserTask[]
+  taskSerial: number
+  taskNotice: string | null
   params: FleetParams
   presetId: string | null
   comparison: string
@@ -57,6 +68,12 @@ interface ConsoleState {
   modelName: string
   modelError: string | null
 
+  setMode: (mode: ModeId) => void
+  setTaskPlacement: (placement: TaskPlacement) => void
+  queueTask: (x: number, z: number) => boolean
+  takeTasks: (limit: number) => UserTask[]
+  returnTasks: (tasks: UserTask[]) => void
+  setTaskNotice: (notice: string | null) => void
   setParam: (key: ParamKey, value: number) => void
   applyPreset: (id: string) => void
   setComparison: (id: string) => void
@@ -80,6 +97,11 @@ interface ConsoleState {
 }
 
 export const useConsole = create<ConsoleState>()((set, get) => ({
+  mode: initialMode(),
+  taskPlacement: 'random',
+  pendingTasks: [],
+  taskSerial: 0,
+  taskNotice: null,
   params: sanitizeParams(PRESETS[0]?.params ?? DEFAULT_PARAMS),
   presetId: PRESETS[0]?.id ?? null,
   comparison: COMPARISONS.find(c => c.kind === 'assignment')?.id ?? 'none',
@@ -103,6 +125,26 @@ export const useConsole = create<ConsoleState>()((set, get) => ({
   modelName: 'Gazebo rover (SDF)',
   modelError: null,
 
+  setMode: mode => set({ mode }),
+  setTaskPlacement: taskPlacement => set({ taskPlacement, pendingTasks: [], taskNotice: null }),
+  queueTask: (x, z) => {
+    const state = get()
+    if (state.pendingTasks.length >= MAX_QUEUED_TASKS) {
+      set({ taskNotice: `${MAX_QUEUED_TASKS} tasks are already waiting for the next planning cycle.` })
+      return false
+    }
+    const serial = state.taskSerial + 1
+    set({ taskSerial: serial, taskNotice: null, pendingTasks: [...state.pendingTasks, { id: `user-${serial}`, x, z }] })
+    return true
+  },
+  takeTasks: limit => {
+    const queued = get().pendingTasks
+    const taken = queued.slice(0, Math.max(0, limit))
+    if (taken.length) set({ pendingTasks: queued.slice(taken.length) })
+    return taken
+  },
+  returnTasks: tasks => set(state => ({ pendingTasks: [...tasks, ...state.pendingTasks].slice(0, MAX_QUEUED_TASKS) })),
+  setTaskNotice: taskNotice => set({ taskNotice }),
   setParam: (key, value) => set(state => {
     const next = snapParam(key, value)
     if (state.params[key] === next) return state
@@ -149,7 +191,7 @@ export const useConsole = create<ConsoleState>()((set, get) => ({
       history: [...state.history, record].slice(-HISTORY),
     }
   }),
-  resetMission: () => set({ metrics: null, solver: null, faults: [], pendingFaults: [], history: [], telemetry: null }),
+  resetMission: () => set({ metrics: null, solver: null, faults: [], pendingFaults: [], pendingTasks: [], taskNotice: null, history: [], telemetry: null }),
   setTelemetry: telemetry => set({ telemetry }),
   setPerf: perf => set({ perf }),
   markBlank: tier => set(state => (state.blankTiers.includes(tier) ? state : { blankTiers: [...state.blankTiers, tier] })),

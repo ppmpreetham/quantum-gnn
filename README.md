@@ -69,6 +69,17 @@ environment enables the matching solver baselines in the comparison menu.
   wheel-limit saturation, collision-safe sequential commits, deadlock
   detours); `src/scene/` renders the fleet, links, beacons and ground in
   about seven draw calls with instancing; `src/ui/` is the HUD.
+- Three modes, switched from the top bar (or `#mode=photoreal`,
+  `#mode=showcase`): the console; a photoreal desert test site running the
+  same live mission (NASA Perseverance model, Poly Haven scans and HDRIs,
+  full light and lens controls, assets in `public/photoreal/` with
+  `CREDITS.md`); and "where we win", which replays seeded scenarios from
+  `shared/showcase-scenarios.json` side by side against a baseline.
+- Tasks can be drawn by the planner (default) or placed by clicking the
+  ground (Mission tab, "Task placement"); clicked tasks go out with the next
+  cycle and the real pipeline assigns them.
+- If port 8765 is taken, `FLEET_API_PORT=8766 npm run dev` moves the planner
+  and the dev proxy together.
 
 ## Battle Tests
 

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import threading
 import time
+from collections import Counter
 from importlib.util import find_spec
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -34,6 +36,9 @@ FAULTS = {
     "packet_loss_spike": (0.4, 3, False),
 }
 OPTIONAL_SOLVERS = {"neal": "neal", "tabu": "tabu", "sqa": "openjij"}
+MAX_USER_TASKS = 8
+TASK_ID = re.compile(r"[A-Za-z0-9_-]{1,32}")
+UserTask = Tuple[str, float, float]
 
 
 def available_solvers() -> Dict[str, bool]:
@@ -93,6 +98,32 @@ def validate_faults(raw, count: int) -> List[Tuple[str, Optional[int]]]:
     return faults
 
 
+def validate_tasks(raw, count: int) -> Optional[List[UserTask]]:
+    """User-placed tasks for this cycle, or None to let the planner draw its own.
+
+    A list (even an empty one) switches the cycle to exactly these tasks.
+    Each rover takes at most one task per cycle, so a cycle carries at most
+    one task per rover.
+    """
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or len(raw) > min(count, MAX_USER_TASKS):
+        raise ValueError(f"tasks must be a list of at most {min(count, MAX_USER_TASKS)} entries")
+    tasks, seen = [], set()
+    for task in raw:
+        if not isinstance(task, dict):
+            raise ValueError("Each task must be an object")
+        task_id, x, z = task.get("id"), task.get("x"), task.get("z")
+        if not isinstance(task_id, str) or not TASK_ID.fullmatch(task_id) or task_id in seen:
+            raise ValueError("Task ids must be unique strings of 1-32 letters, digits, '-' or '_'")
+        if (any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v) for v in (x, z))
+                or math.hypot(x, z) > ARENA_RADIUS + 1e-6):
+            raise ValueError("Task sites must be finite x, z points inside the arena")
+        seen.add(task_id)
+        tasks.append((task_id, float(x), float(z)))
+    return tasks
+
+
 def validate_comparison(raw) -> str:
     known = {c["id"] for c in CONFIG["comparisons"]}
     if raw not in known:
@@ -124,6 +155,28 @@ def min_spanning_cost(nodes, edges: List[Edge], features, root) -> Optional[int]
             used.append(edge)
     tree = [e for e in used if find(e[0]) == find(root)]
     return sum(int(round(features[e].processing_cost * scale)) for e in tree) if tree else None
+
+
+def constraint_report(builder: EdgeSelectionQUBO, selected) -> dict:
+    """Which hard constraints an edge set breaks, in a form the client can highlight."""
+    selected = list(selected)
+    degree = Counter(n for edge in selected for n in edge)
+    over_cap = [[n, degree[n], limit] for n, limit in sorted(builder.degree_limits.items()) if degree[n] > limit]
+    unreachable: List[int] = []
+    if builder.required_nodes and builder.root is not None:
+        adjacency = {n: [] for n in builder.nodes}
+        for u, v in selected:
+            adjacency[u].append(v)
+            adjacency[v].append(u)
+        seen, stack = {builder.root}, [builder.root]
+        while stack:
+            for v in adjacency[stack.pop()]:
+                if v not in seen:
+                    seen.add(v)
+                    stack.append(v)
+        unreachable = sorted(set(builder.required_nodes) - seen)
+    return {"overCap": over_cap, "unreachable": unreachable,
+            "cost": sum(builder.edge_cost_units[e] for e in selected), "budget": builder.global_budget}
 
 
 class LiveSimulation(RoverSimulation):
@@ -195,18 +248,35 @@ class LiveSimulation(RoverSimulation):
         self.solve_ms = max(solve, time.perf_counter() - start - build) * 1e3
         return self.kept, build, solve
 
-    def advance(self, positions: List[Tuple[float, float]]) -> dict:
+    def advance(self, positions: List[Tuple[float, float]],
+                tasks: Optional[List[UserTask]] = None) -> dict:
+        """One planner cycle. With tasks, the cycle dispatches exactly those
+        user-placed tasks instead of drawing tasks_per_cycle of its own."""
         self.live_positions = positions
         self.edges, self.features, self.kept = [], {}, []
         self.build_ms = self.solve_ms = 0.0
         self.last_prune = ("none", None, None)
         self.last_outcomes = []
         self.last_path_factor = {n: float(n == self.root) for n in self.nodes}
-        result = self.step(self.cycle)
+        drawn = self.tasks_per_cycle
+        if tasks is not None:
+            self.tasks_per_cycle = len(tasks)
+        try:
+            result = self.step(self.cycle)
+        finally:
+            self.tasks_per_cycle = drawn
+        if tasks:
+            self._relabel(result, tasks)
         self.cycle += 1
         self.successes += result.get("success", 0)
         self.tasks_done += result.get("tasks", 0)
         return result
+
+    def _relabel(self, result: dict, tasks: List[UserTask]) -> None:
+        """RoverSimulation names a cycle's tasks task-<cycle>-<k>; map them back to the user's ids."""
+        names = {f"task-{self.cycle}-{k}": task_id for k, (task_id, _, _) in enumerate(tasks)}
+        result["assignment"] = {names[t]: n for t, n in result.get("assignment", {}).items()}
+        self.last_outcomes = [(names[t], *rest) for t, *rest in self.last_outcomes]
 
 
 def _dimod_qubo(Q: np.ndarray) -> dict:
@@ -251,10 +321,13 @@ def run_solver_baseline(name: str, builder: EdgeSelectionQUBO, warm_edges,
     energy = builder.energy(z)
     feasible = not builder.check_constraints(np.rint(z))
     scale = max(1.0, abs(ours_energy))
+    selected = builder.selected_edges(z)
     return {
         "feasible": feasible, "energy": energy, "oursEnergy": ours_energy,
         "gap": (energy - ours_energy) / scale, "ms": elapsed,
         "matched": feasible and energy <= ours_energy + 1e-9 * scale,
+        "edges": [[a, b] for a, b in selected],
+        "violations": constraint_report(builder, selected),
     }
 
 
@@ -285,16 +358,17 @@ class PlannerSession:
         for sim in (self.primary, *self.followers.values()):
             sim.configure(params)
 
-    def step(self, positions, faults, comparison: str) -> dict:
+    def step(self, positions, faults, comparison: str,
+             tasks: Optional[List[UserTask]] = None) -> dict:
         self.last_used = time.monotonic()
         for kind, rover in faults:
             for sim in (self.primary, *self.followers.values()):
                 sim.inject(kind, rover)
         warm_edges = set(self.primary.last_kept)
-        result = self.primary.advance(positions)
+        result = self.primary.advance(positions, tasks)
         for follower in self.followers.values():
-            follower.advance(positions)
-        return self._payload(result, comparison, warm_edges)
+            follower.advance(positions, tasks)
+        return self._payload(result, comparison, warm_edges, tasks)
 
     def _solver_comparison(self, comparison: str, warm_edges) -> Optional[dict]:
         if not comparison.startswith("solver:"):
@@ -310,6 +384,7 @@ class PlannerSession:
             live = set(builder.edges)
             latest = run_solver_baseline(name, builder, warm_edges & live,
                                          result.energy, seed=self.primary.cycle)
+            latest["oursCost"] = constraint_report(builder, result.kept_edges)["cost"]
             totals = self.solver_totals
             totals["runs"] += 1
             totals["feasible"] += int(latest["feasible"])
@@ -320,9 +395,22 @@ class PlannerSession:
         return {"baseline": name, "latest": latest, "totals": dict(self.solver_totals),
                 "oursMs": self.primary.solve_ms}
 
-    def _payload(self, result: dict, comparison: str, warm_edges) -> dict:
+    @staticmethod
+    def _tasks(sim: LiveSimulation, sites: Dict[str, Tuple[float, float]]) -> List[dict]:
+        out = []
+        for tid, n, ex, dl, explored in sim.last_outcomes:
+            task = {"id": tid, "rover": n, "executed": ex, "delivered": dl,
+                    "success": ex and dl, "explored": explored}
+            if tid in sites:
+                task["site"] = list(sites[tid])
+            out.append(task)
+        return out
+
+    def _payload(self, result: dict, comparison: str, warm_edges,
+                 tasks: Optional[List[UserTask]] = None) -> dict:
         sim = self.primary
         assignment = result.get("assignment", {})
+        sites = {tid: (x, z) for tid, x, z in tasks or []}
         kept = set(sim.kept)
         mode, builder, solved = sim.last_prune
         reachable = {n for n, f in sim.last_path_factor.items() if f > 0.0}
@@ -341,9 +429,8 @@ class PlannerSession:
                 "quality": sim.features[(a, b)].link_quality,
                 "utility": edge_utility(sim.features[(a, b)]),
             } for a, b in sim.edges],
-            "tasks": [{"id": tid, "rover": n, "executed": ex, "delivered": dl,
-                       "success": ex and dl, "explored": explored}
-                      for tid, n, ex, dl, explored in sim.last_outcomes],
+            "tasks": self._tasks(sim, sites),
+            "unassigned": [tid for tid in sites if tid not in assignment],
             "faults": sim.active_faults(),
             "metrics": {
                 "successes": sim.successes, "tasks": sim.tasks_done,
@@ -363,7 +450,9 @@ class PlannerSession:
             "assignmentBaselines": {
                 name: {"successes": f.successes, "tasks": f.tasks_done,
                        "cycleSuccesses": sum(ok and dl for _, _, ok, dl, _ in f.last_outcomes),
-                       "cycleTasks": len(f.last_outcomes)}
+                       "cycleTasks": len(f.last_outcomes),
+                       "trust": [f.trust.get(n) for n in f.nodes],
+                       "outcomes": self._tasks(f, sites)}
                 for name, f in self.followers.items()
             },
             "solver": self._solver_comparison(comparison, warm_edges),

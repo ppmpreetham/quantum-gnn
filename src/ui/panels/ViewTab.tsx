@@ -25,72 +25,93 @@ export interface ModelControls {
   onFile: (file: File) => void; onForward: (axis: ForwardAxis) => void; onReset: () => void
 }
 
-export function ViewTab({ model }: { model: ModelControls }) {
+export function CameraField() {
   const camera = useConsole(s => s.camera)
   const setCamera = useConsole(s => s.setCamera)
+  return (
+    <div className="field">
+      <span className="field-label">Camera</span>
+      <Segmented label="Camera" value={camera} options={CAMERA_OPTIONS} onChange={setCamera} />
+      <p className="field-hint">Drag to orbit, right-drag to pan, scroll to zoom. Click a rover to select it.</p>
+    </div>
+  )
+}
+
+export function OverlaysField() {
   const overlays = useConsole(s => s.overlays)
   const toggleOverlay = useConsole(s => s.toggleOverlay)
+  return (
+    <fieldset className="param-group">
+      <legend>Overlays</legend>
+      {OVERLAYS.map(o => <Toggle key={o.key} label={o.label} hint={o.hint} checked={overlays[o.key]} onChange={() => toggleOverlay(o.key)} />)}
+    </fieldset>
+  )
+}
+
+/** Quality tier, live frame statistics and the blank-frame fallback note; shared by every mode. */
+export function QualityField() {
   const quality = useConsole(s => s.quality)
   const setQuality = useConsole(s => s.setQuality)
   const perf = useConsole(s => s.perf)
   const paused = useConsole(s => s.paused)
   const blankTiers = useConsole(s => s.blankTiers)
-  const file = useRef<HTMLInputElement>(null)
+  return (
+    <div className="field">
+      <span className="field-label">Graphics quality</span>
+      <Segmented<QualityMode> label="Graphics quality" value={quality} onChange={setQuality} options={[
+        { value: 'auto', label: 'Auto', title: 'Steps down when the frame rate drops' },
+        { value: 'high', label: 'High', title: 'Full post-processing' },
+        { value: 'balanced', label: 'Balanced', title: 'Lighter post-processing' },
+        { value: 'low', label: 'Low', title: 'No post-processing' },
+      ]} />
+      <dl className="perf">
+        <div><dt>Frame rate</dt><dd>{paused ? 'Idle' : `${perf.fps} fps`}</dd></div>
+        <div><dt>Draw calls</dt><dd>{perf.calls}</dd></div>
+        <div><dt>Triangles</dt><dd>{perf.triangles.toLocaleString()}</dd></div>
+        <div><dt>Tier</dt><dd>{perf.tier}</dd></div>
+      </dl>
+      {blankTiers.length > 0 && (
+        <p className="field-hint" role="status">
+          Post-processing at {blankTiers.join(' and ')} quality drew a blank frame on this GPU, so the view uses {perf.tier} instead.
+        </p>
+      )}
+    </div>
+  )
+}
 
+function ModelField({ model }: { model: ModelControls }) {
+  const file = useRef<HTMLInputElement>(null)
+  return (
+    <fieldset className="param-group">
+      <legend>Rover model</legend>
+      <p className="model-name">{model.name}</p>
+      <div className="row">
+        <button type="button" className="ghost" disabled={model.loading} onClick={() => file.current?.click()}>
+          {model.loading ? 'Loading…' : 'Import Blender .glb'}
+        </button>
+        {model.isCustom && <button type="button" className="ghost" onClick={model.onReset}>Use SDF rover</button>}
+      </div>
+      <input ref={file} type="file" accept=".glb,model/gltf-binary" hidden
+        onChange={event => { const f = event.target.files?.[0]; if (f) model.onFile(f); event.target.value = '' }} />
+      {model.isCustom && (
+        <Select label="Model faces" value={model.forward} onChange={v => model.onForward(v as ForwardAxis)} options={[
+          { value: 'auto', label: 'Detect from shape' }, { value: '+x', label: '+X' }, { value: '-x', label: '−X' },
+          { value: '+z', label: '+Z (Blender −Y)' }, { value: '-z', label: '−Z' },
+        ]} />
+      )}
+      {model.error && <p className="error" role="alert">{model.error}</p>}
+      <p className="field-hint">You can also drop a .glb onto the scene. Name wheel meshes with “wheel” so they spin; the model is scaled to the 0.9 m SDF footprint.</p>
+    </fieldset>
+  )
+}
+
+export function ViewTab({ model }: { model: ModelControls }) {
   return (
     <div className="tab-body">
-      <div className="field">
-        <span className="field-label">Camera</span>
-        <Segmented label="Camera" value={camera} options={CAMERA_OPTIONS} onChange={setCamera} />
-        <p className="field-hint">Drag to orbit, right-drag to pan, scroll to zoom. Click a rover to select it.</p>
-      </div>
-
-      <fieldset className="param-group">
-        <legend>Overlays</legend>
-        {OVERLAYS.map(o => <Toggle key={o.key} label={o.label} hint={o.hint} checked={overlays[o.key]} onChange={() => toggleOverlay(o.key)} />)}
-      </fieldset>
-
-      <div className="field">
-        <span className="field-label">Graphics quality</span>
-        <Segmented<QualityMode> label="Graphics quality" value={quality} onChange={setQuality} options={[
-          { value: 'auto', label: 'Auto', title: 'Steps down when the frame rate drops' },
-          { value: 'high', label: 'High', title: 'MSAA, ambient occlusion, bloom' },
-          { value: 'balanced', label: 'Balanced', title: 'SMAA and bloom' },
-          { value: 'low', label: 'Low', title: 'No post-processing' },
-        ]} />
-        <dl className="perf">
-          <div><dt>Frame rate</dt><dd>{paused ? 'Idle' : `${perf.fps} fps`}</dd></div>
-          <div><dt>Draw calls</dt><dd>{perf.calls}</dd></div>
-          <div><dt>Triangles</dt><dd>{perf.triangles.toLocaleString()}</dd></div>
-          <div><dt>Tier</dt><dd>{perf.tier}</dd></div>
-        </dl>
-        {blankTiers.length > 0 && (
-          <p className="field-hint" role="status">
-            Post-processing at {blankTiers.join(' and ')} quality drew a blank frame on this GPU, so the console uses {perf.tier} instead.
-          </p>
-        )}
-      </div>
-
-      <fieldset className="param-group">
-        <legend>Rover model</legend>
-        <p className="model-name">{model.name}</p>
-        <div className="row">
-          <button type="button" className="ghost" disabled={model.loading} onClick={() => file.current?.click()}>
-            {model.loading ? 'Loading…' : 'Import Blender .glb'}
-          </button>
-          {model.isCustom && <button type="button" className="ghost" onClick={model.onReset}>Use SDF rover</button>}
-        </div>
-        <input ref={file} type="file" accept=".glb,model/gltf-binary" hidden
-          onChange={event => { const f = event.target.files?.[0]; if (f) model.onFile(f); event.target.value = '' }} />
-        {model.isCustom && (
-          <Select label="Model faces" value={model.forward} onChange={v => model.onForward(v as ForwardAxis)} options={[
-            { value: 'auto', label: 'Detect from shape' }, { value: '+x', label: '+X' }, { value: '-x', label: '−X' },
-            { value: '+z', label: '+Z (Blender −Y)' }, { value: '-z', label: '−Z' },
-          ]} />
-        )}
-        {model.error && <p className="error" role="alert">{model.error}</p>}
-        <p className="field-hint">You can also drop a .glb onto the scene. Name wheel meshes with “wheel” so they spin; the model is scaled to the 0.9 m SDF footprint.</p>
-      </fieldset>
+      <CameraField />
+      <OverlaysField />
+      <QualityField />
+      <ModelField model={model} />
     </div>
   )
 }

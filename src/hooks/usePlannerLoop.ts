@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { PlannerError, fetchHealth, requestStep } from '../api/planner'
 import type { StepRequest } from '../api/planner'
+import { sleep } from '../api/sleep'
 import { plannerParams } from '../config/fleet'
 import type { FleetEngine } from '../core/fleet'
 import { useConsole } from '../state/store'
@@ -13,13 +14,8 @@ const MAX_BACKOFF_MS = 8000
  */
 let lastSessionId: string | undefined
 
-function sleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise(resolve => {
-    const timer = setTimeout(done, ms)
-    signal.addEventListener('abort', done, { once: true })
-    function done() { clearTimeout(timer); signal.removeEventListener('abort', done); resolve() }
-  })
-}
+const unassignedNotice = (count: number) =>
+  `${count === 1 ? 'One task' : `${count} tasks`} found no eligible rover: every candidate was below the trust gate, low on battery, short of compute or cut off from the root.`
 
 /**
  * One request in flight at a time: the next cycle starts only after the
@@ -48,6 +44,7 @@ export function usePlannerLoop(engine: FleetEngine): void {
         const request: StepRequest = {
           sessionId: lastSessionId, params: plannerParams(state.params), positions: engine.positions(),
           faults: state.takeFaults(), comparison: state.comparison,
+          ...(state.taskPlacement === 'click' && { tasks: state.takeTasks(engine.count) }),
         }
         try {
           const step = await requestStep(request, signal)
@@ -61,10 +58,12 @@ export function usePlannerLoop(engine: FleetEngine): void {
           failures = 0
           engine.applyPlan(step)
           store.getState().recordStep(step)
+          if (step.unassigned?.length) store.getState().setTaskNotice(unassignedNotice(step.unassigned.length))
           store.getState().setPlanner('online', null, performance.now() - started)
         } catch (error) {
           if (signal.aborted) return
           request.faults.forEach(fault => store.getState().queueFault(fault))
+          if (request.tasks?.length) store.getState().returnTasks(request.tasks)
           if (error instanceof PlannerError && error.busy) {
             // the server is finishing another solve; this is load, not an outage
             await sleep(400, signal)
