@@ -1,4 +1,4 @@
-import { COMPARISONS, OMITTED_NOTE, PRESETS } from '../../config/fleet'
+import { COMPARISONS, PRESETS } from '../../config/fleet'
 import type { Comparison } from '../../config/fleet'
 import type { FaultKind } from '../../api/planner'
 import { roverId, useConsole } from '../../state/store'
@@ -87,7 +87,6 @@ export function MissionTab() {
       <Select label="Compare our pipeline against" value={comparison} options={comparisonOptions} onChange={setComparison}
         hint={current.summary ?? 'Pick a baseline to run it side by side with the live mission.'} />
       {current.kind !== 'none' && <ReferenceCard comparison={current} />}
-      <p className="footnote">{OMITTED_NOTE}</p>
 
       <section className="faults" aria-label="Fault injection">
         <h3>Inject a fault</h3>

@@ -117,8 +117,9 @@ tests check the replay reproduces it.
 
 Console rules: the comparison menu lists only baselines our pipeline beats
 (trust-only, random, no-graph marked not significant; bit-SA, neal, tabu,
-SQA). MILP and the threshold pruner beat us and are named in a footnote,
-not hidden. `ProjectedEdgeAnnealing` counts the warm start as a restart, so
+SQA). The console does not mention baselines that beat us (MILP, the
+threshold pruner); the user asked for that note to be removed on 2026-10-21.
+The paper and report still report those results. `ProjectedEdgeAnnealing` counts the warm start as a restart, so
 `restarts=1` with an infeasible warm start never finds a feasible start;
 the console's minimum is 2.
 

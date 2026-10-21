@@ -28,7 +28,7 @@ export interface ArenaSpec {
 }
 interface FleetConfig {
   arena: ArenaSpec; params: ParamSpec[]; groups: { id: string; label: string }[]
-  defaults: FleetParams; presets: Preset[]; comparisons: Comparison[]; omitted: string
+  defaults: FleetParams; presets: Preset[]; comparisons: Comparison[]
 }
 
 const config = raw as unknown as FleetConfig
@@ -39,7 +39,6 @@ export const PARAM_GROUPS = config.groups
 export const DEFAULT_PARAMS: Readonly<FleetParams> = config.defaults
 export const PRESETS: readonly Preset[] = config.presets
 export const COMPARISONS: readonly Comparison[] = config.comparisons
-export const OMITTED_NOTE = config.omitted
 export const SPEC_BY_KEY = Object.fromEntries(PARAM_SPECS.map(s => [s.key, s])) as Record<ParamKey, ParamSpec>
 
 const decimals = (step: number) => Math.max(0, -Math.floor(Math.log10(step) + 1e-9))

@@ -1,5 +1,5 @@
 import { useEffect, useMemo } from 'react'
-import { COMPARISONS, OMITTED_NOTE } from '../../config/fleet'
+import { COMPARISONS } from '../../config/fleet'
 import { createSdfRover } from '../../scene/model/sdfRover'
 import { Segmented, Toggle } from '../../ui/controls'
 import { ReferenceCard } from '../../ui/panels/MissionTab'
@@ -64,7 +64,6 @@ function ScenarioPanel({ scenario }: { scenario: Scenario }) {
           </section>
           <p className="footnote strong">{SCENARIO_NOTE}</p>
           {comparison && <ReferenceCard comparison={comparison} />}
-          <p className="footnote">{OMITTED_NOTE}</p>
           <Toggle label="Camera follows each highlight" checked={directed} onChange={() => setDirected(!directed)} />
         </div>
       </div>
